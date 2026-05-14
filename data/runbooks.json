@@ -1,0 +1,27 @@
+[
+  {
+    "id": 1,
+    "title": "Deploy to Production",
+    "content": "1. Ensure all tests pass on main branch.\n2. Create a release tag: git tag v<version>\n3. Push the tag: git push origin v<version>\n4. Monitor GitHub Actions deploy-prod workflow.\n5. Verify health endpoint post-deploy: GET /health\n6. Announce in #deployments Slack channel."
+  },
+  {
+    "id": 2,
+    "title": "Incident Response Runbook",
+    "content": "1. Acknowledge the alert in PagerDuty.\n2. Join #incident-response Slack channel.\n3. Assign Incident Commander (IC).\n4. Identify affected systems using the log analyzer.\n5. Communicate status every 15 minutes.\n6. Write post-mortem within 48 hours of resolution."
+  },
+  {
+    "id": 3,
+    "title": "Database Backup and Restore",
+    "content": "Backup: pg_dump -U postgres mydb > backup.sql\nRestore: psql -U postgres mydb < backup.sql\nVerify: SELECT COUNT(*) FROM critical_table;\nSchedule: Backups run nightly at 02:00 UTC via cron."
+  },
+  {
+    "id": 4,
+    "title": "On-Call Handoff Checklist",
+    "content": "1. Review open alerts and incidents.\n2. Check deployment queue \u2014 any pending prod deploys?\n3. Review anomaly scores in log analyzer (score > 75).\n4. Brief incoming on-call engineer on active issues.\n5. Update on-call rotation in PagerDuty."
+  },
+  {
+    "id": 5,
+    "title": "Rollback Procedure",
+    "content": "1. Identify the last stable release tag.\n2. Trigger deploy workflow with previous tag.\n3. Monitor health endpoint: GET /health\n4. Announce rollback in #deployments.\n5. Open a bug report for the regression."
+  }
+]
