@@ -1,6 +1,8 @@
 # AI-Assisted Log Analyzer
 
-Version 2.0 introduces a role-aware web experience as the primary dashboard surface.
+Version 3.0 adds production-style triage workflows on top of the role-aware web dashboard.
+
+See `CHANGELOG.md` for the complete release history.
 
 ## Recruiter Snapshot
 
@@ -18,14 +20,18 @@ Version 2.0 introduces a role-aware web experience as the primary dashboard surf
 | **Solution** | Log viewer with anomaly scoring, safe AI summaries, and redaction before AI calls. |
 | **Impact** | MTTD target under 10 minutes and less on-call time spent on manual scanning. |
 
-## What Is New In 2.0
+## What Is New In 3.0
 
-- Persona-based demo login for Alice, Bob, Carol, Dana, and Evan
-- Role-aware views for ops engineers, support managers, and IT admins
-- Manager-only assignment controls, workload sidebar, and AI ops brief
-- Ops-focused personal stat cards while preserving visibility into the shared team queue
-- Top-of-page timeline analytics for managers with stacked volume and level trend views
-- Safe AI explanation flows backed by redaction and audit logging
+- Anomaly flagging workflow with RBAC-enforced permissions
+- Flagged metric card with click-to-filter behavior on the team queue
+- Manager-only Flagged Watchlist with aging risk badges
+- MTTD Notification Demo with +5, +10, and +15 minute escalation stages
+- Audible 3-beep alerts for critical and escalated thresholds
+- Viewport-pinned escalation banner and top-of-page notification toasts
+- Acknowledgment-based suppression that clears notifications at `in_review` and `resolved`
+- One-click demo cleanup that removes seeded demo logs and resets UI state
+- Query-param-aware manager handoff on My Logs (`?engineer=` links from sidebar)
+- Expanded demo documentation paths for MTTD, role contrast, flagging, and AI explanation
 
 ## Why This Matters
 
@@ -120,7 +126,7 @@ npm run dev
 
 Open http://localhost:3000/log-analyzer/team after starting the API.
 
-The web UI is the current v2.0 demo surface. It includes:
+The web UI is the current v3.0 demo surface. It includes:
 
 - Persona-based login with role expectations on the sign-in screen
 - Shared team queue with filters, stats, detail modal, and AI explanations
@@ -128,7 +134,7 @@ The web UI is the current v2.0 demo surface. It includes:
 - Personal queue behavior for ops engineers on `/log-analyzer/my-logs`
 - Manager analytics and AI ops brief for support managers and IT admins
 
-## Running (v2.0)
+## Running (v3.0)
 
 ### API + Web Dashboard
 
@@ -143,14 +149,14 @@ npm run dev
 
 Then open http://localhost:3000/log-analyzer/team.
 
-The primary v2.0 dashboard flow is web-based:
+The primary v3.0 dashboard flow is web-based:
 
 - Team Dashboard: `/log-analyzer/team`
 - Individual Dashboard: `/log-analyzer/my-logs`
 
 ### Legacy Streamlit Prototypes (optional)
 
-The original Streamlit screens are still available for reference in `app/log_analyzer/app.py` and `app/log_analyzer/individual.py`, but they are no longer the primary v2.0 dashboard run path.
+The original Streamlit screens are still available for reference in `app/log_analyzer/app.py` and `app/log_analyzer/individual.py`, but they are no longer the primary v3.0 dashboard run path.
 
 ## Demo Personas
 
