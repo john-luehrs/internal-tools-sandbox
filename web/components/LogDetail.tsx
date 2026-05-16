@@ -1,24 +1,46 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Log } from "@/lib/types";
 
 interface LogDetailProps {
   log: Log | null;
   onClose?: () => void;
   onExplain?: () => void;
+  onUpdateAssignment?: (logId: number, assignedTo: string | null, status: string) => void;
+  isAssignmentLoading?: boolean;
+  saveMessage?: { text: string; type: "success" | "error" } | null;
+  safeMode?: boolean;
+  onSafeModeChange?: (value: boolean) => void;
   isLoading?: boolean;
   explanation?: string;
+  isManager?: boolean;
 }
+
+const TEAM_MEMBERS = ["alice", "bob", "carol", "david"];
 
 export default function LogDetail({
   log,
   onClose,
   onExplain,
+  onUpdateAssignment,
+  isAssignmentLoading,
+  saveMessage,
+  safeMode = true,
+  onSafeModeChange,
   isLoading,
   explanation,
+  isManager = false,
 }: LogDetailProps) {
   if (!log) return null;
+
+  const [assignedToValue, setAssignedToValue] = useState(log.assigned_to || "");
+  const [statusValue, setStatusValue] = useState(log.status);
+
+  useEffect(() => {
+    setAssignedToValue(log.assigned_to || "");
+    setStatusValue(log.status);
+  }, [log.log_id, log.assigned_to, log.status]);
 
   const getLevelBadgeClass = (level: string) => {
     switch (level) {
@@ -95,6 +117,46 @@ export default function LogDetail({
             </div>
           </div>
 
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div>
+              <label style={{ color: "var(--muted)", fontSize: "12px", display: "block", marginBottom: "6px" }}>
+                Assign To
+              </label>
+              {isManager ? (
+                <select
+                  className="filter-select"
+                  value={assignedToValue}
+                  onChange={(e) => setAssignedToValue(e.target.value)}
+                  disabled={isAssignmentLoading}
+                >
+                  <option value="">Unassigned</option>
+                  {TEAM_MEMBERS.map((member) => (
+                    <option key={member} value={member}>
+                      {member}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p style={{ margin: "4px 0 0 0" }}>{log.assigned_to || "Unassigned"}</p>
+              )}
+            </div>
+            <div>
+              <label style={{ color: "var(--muted)", fontSize: "12px", display: "block", marginBottom: "6px" }}>
+                Status
+              </label>
+              <select
+                className="filter-select"
+                value={statusValue}
+                onChange={(e) => setStatusValue(e.target.value as Log["status"])}
+                disabled={isAssignmentLoading}
+              >
+                <option value="unreviewed">Unreviewed</option>
+                <option value="in_review">In Review</option>
+                <option value="resolved">Resolved</option>
+              </select>
+            </div>
+          </div>
+
           {explanation && (
             <div
               style={{
@@ -114,10 +176,40 @@ export default function LogDetail({
 
         <div className="modal-footer">
           {log.anomaly_score > 75 && (
-            <button className="button button-primary button-small" onClick={onExplain} disabled={isLoading}>
-              {isLoading ? "Loading..." : "Get AI Explanation"}
-            </button>
+            <>
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--muted)", fontSize: "12px" }}>
+                <input
+                  type="checkbox"
+                  checked={safeMode}
+                  onChange={(e) => onSafeModeChange?.(e.target.checked)}
+                />
+                Safe AI mode (redact sensitive fields)
+              </label>
+              <button className="button button-primary button-small" onClick={onExplain} disabled={isLoading}>
+                {isLoading ? "Loading..." : "Get AI Explanation"}
+              </button>
+            </>
           )}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {saveMessage && (
+              <span
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: saveMessage.type === "success" ? "var(--color-success)" : "var(--color-error)",
+                }}
+              >
+                {saveMessage.text}
+              </span>
+            )}
+            <button
+              className="button button-primary button-small"
+              onClick={() => onUpdateAssignment?.(log.log_id, assignedToValue || null, statusValue)}
+              disabled={isAssignmentLoading}
+            >
+              {isAssignmentLoading ? "Saving..." : "Save Assignment"}
+            </button>
+          </div>
           <button className="button button-secondary button-small" onClick={onClose}>
             Close
           </button>

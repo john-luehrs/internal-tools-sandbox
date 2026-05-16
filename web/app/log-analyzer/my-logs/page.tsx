@@ -2,19 +2,14 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import LogTable from "@/components/LogTable";
 import LogDetail from "@/components/LogDetail";
 import { getAssignedLogs, updateLogStatus, explainLog } from "@/lib/api";
+import { TEAM_WORKLOAD_UPDATED_EVENT } from "@/lib/events";
+import { useRoleContext } from "@/lib/RoleContext";
 import { Log } from "@/lib/types";
 
-const TEAM_MEMBERS = ["alice", "bob", "carol", "david"];
-
 export default function MyLogsDashboard() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const rawEngineer = searchParams.get("engineer");
-  const engineer = rawEngineer && TEAM_MEMBERS.includes(rawEngineer) ? rawEngineer : "alice";
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -23,13 +18,16 @@ export default function MyLogsDashboard() {
   const [explanation, setExplanation] = useState<string | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
-
-  // Load assigned logs for current engineer
+  const [statusError, setStatusError] = useState("");
+  const [safeMode, setSafeMode] = useState(true);
+  const { token, username } = useRoleContext();
+  const engineer = username;
+  const resolvedToken = token ?? undefined;
   useEffect(() => {
     const loadLogs = async () => {
       try {
         setLoading(true);
-        const logsData = await getAssignedLogs(engineer);
+        const logsData = await getAssignedLogs(engineer, resolvedToken);
         setLogs(logsData);
         setError("");
       } catch (err) {
@@ -40,14 +38,14 @@ export default function MyLogsDashboard() {
     };
 
     loadLogs();
-  }, [engineer]);
+  }, [engineer, resolvedToken]);
 
   const handleExplain = async () => {
     if (!selectedLog) return;
 
     try {
       setExplainLoading(true);
-      const response = await explainLog(selectedLog.log_id, engineer);
+      const response = await explainLog(selectedLog.log_id, engineer, safeMode, resolvedToken);
       setExplanation(response.explanation);
     } catch (err) {
       setExplanation(`Error: ${err instanceof Error ? err.message : "Failed to get explanation"}`);
@@ -58,19 +56,20 @@ export default function MyLogsDashboard() {
 
   const handleStatusChange = async (status: string) => {
     if (!selectedLog) return;
-
+    setStatusError("");
     try {
       setStatusLoading(true);
-      const result = await updateLogStatus(selectedLog.log_id, status);
+      const result = await updateLogStatus(selectedLog.log_id, status, resolvedToken);
 
       if (result.success && result.log) {
         setLogs((prevLogs) =>
           prevLogs.map((log) => (log.log_id === selectedLog.log_id ? result.log : log))
         );
         setSelectedLog(result.log);
+        window.dispatchEvent(new Event(TEAM_WORKLOAD_UPDATED_EVENT));
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to update status");
+      setStatusError(err instanceof Error ? err.message : "Failed to update status");
     } finally {
       setStatusLoading(false);
     }
@@ -96,22 +95,11 @@ export default function MyLogsDashboard() {
       </div>
 
       <div className="card" style={{ marginBottom: "20px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <label style={{ color: "var(--muted)", fontSize: "12px", textTransform: "uppercase" }}>
             Engineer:
           </label>
-          <select
-            className="filter-select"
-            value={engineer}
-            onChange={(e) => router.push(`/log-analyzer/my-logs?engineer=${e.target.value}`)}
-            style={{ flex: 1, maxWidth: "200px" }}
-          >
-            {TEAM_MEMBERS.map((member) => (
-              <option key={member} value={member}>
-                {member}
-              </option>
-            ))}
-          </select>
+          <span style={{ fontSize: "14px", fontWeight: 600 }}>{engineer}</span>
         </div>
       </div>
 
@@ -194,6 +182,11 @@ export default function MyLogsDashboard() {
                     </button>
                   ))}
                 </div>
+                {statusError && (
+                  <p style={{ color: "var(--color-error)", fontSize: "12px", margin: "6px 0 0 0" }}>
+                    {statusError}
+                  </p>
+                )}
               </div>
 
               {explanation && (
@@ -215,13 +208,23 @@ export default function MyLogsDashboard() {
 
             <div className="modal-footer">
               {selectedLog.anomaly_score > 75 && (
-                <button
-                  className="button button-primary button-small"
-                  onClick={handleExplain}
-                  disabled={explainLoading}
-                >
-                  {explainLoading ? "Loading..." : "Get AI Explanation"}
-                </button>
+                <>
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--muted)", fontSize: "12px" }}>
+                    <input
+                      type="checkbox"
+                      checked={safeMode}
+                      onChange={(e) => setSafeMode(e.target.checked)}
+                    />
+                    Safe AI mode (redact sensitive fields)
+                  </label>
+                  <button
+                    className="button button-primary button-small"
+                    onClick={handleExplain}
+                    disabled={explainLoading}
+                  >
+                    {explainLoading ? "Loading..." : "Get AI Explanation"}
+                  </button>
+                </>
               )}
               <button className="button button-secondary button-small" onClick={() => setSelectedLog(null)}>
                 Close

@@ -24,6 +24,9 @@ DEMO_TOKENS = {
     "token-manager": "support_manager",
     "token-qa": "qa_engineer",
     "token-ops": "ops_engineer",
+    "token-alice": "ops_engineer",
+    "token-bob": "ops_engineer",
+    "token-carol": "ops_engineer",
     "token-hr": "hr_admin",
     "token-it": "it_admin",
 }
@@ -157,7 +160,7 @@ def list_team_logs(
 
 @app.get("/api/logs/my-assigned")
 def list_assigned_logs(engineer: str, role: str = Depends(get_role)):
-    if role != "ops_engineer":
+    if role not in ("ops_engineer", "it_admin", "support_manager"):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -200,8 +203,8 @@ class AssignRequest(BaseModel):
 
 @app.post("/api/logs/{log_id}/assign")
 def assign_log(log_id: int, req: AssignRequest, role: str = Depends(get_role)):
-    if role not in ("ops_engineer", "it_admin", "support_manager"):
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    if role not in ("it_admin", "support_manager"):
+        raise HTTPException(status_code=403, detail="Only managers can reassign logs")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
     
@@ -242,7 +245,7 @@ class StatusRequest(BaseModel):
 
 @app.patch("/api/logs/{log_id}/status")
 def update_log_status(log_id: int, req: StatusRequest, role: str = Depends(get_role)):
-    if role != "ops_engineer":
+    if role not in ("ops_engineer", "it_admin", "support_manager"):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -265,7 +268,12 @@ def update_log_status(log_id: int, req: StatusRequest, role: str = Depends(get_r
 
 
 @app.get("/api/logs/{log_id}/explain")
-def explain_log(log_id: int, engineer: Optional[str] = None, role: str = Depends(get_role)):
+def explain_log(
+    log_id: int,
+    engineer: Optional[str] = None,
+    safe_mode: bool = True,
+    role: str = Depends(get_role),
+):
     if role not in ("ops_engineer", "it_admin"):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
@@ -280,22 +288,97 @@ def explain_log(log_id: int, engineer: Optional[str] = None, role: str = Depends
     log = dict(row)
     
     if log["anomaly_score"] <= 75:
-        return {"explanation": "Anomaly score too low for explanation", "anomaly_score": log["anomaly_score"]}
+        return {
+            "explanation": "Anomaly score too low for explanation",
+            "anomaly_score": log["anomaly_score"],
+            "safe_mode": safe_mode,
+        }
     
     from services.ai_client import explain_anomaly
-    from services.pii_scrubber import scrub_pii
-    
-    explanation = explain_anomaly(log["message"], log["anomaly_score"])
+    from services.pii_scrubber import redact_sensitive
+
+    # Safe mode ensures sensitive fields are redacted before external AI calls.
+    ai_message = redact_sensitive(log["message"]) if safe_mode else log["message"]
+    explanation = explain_anomaly(ai_message, log["anomaly_score"])
     
     from services.audit_logger import log_action
     log_action(
         actor=engineer or role,
         action="log_explained",
         entity_id=log_id,
-        metadata={}
+        metadata={"safe_mode": safe_mode}
     )
-    
-    return {"explanation": explanation, "anomaly_score": log["anomaly_score"]}
+
+    return {
+        "explanation": explanation,
+        "anomaly_score": log["anomaly_score"],
+        "safe_mode": safe_mode,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Manager AI Ops Brief
+# ---------------------------------------------------------------------------
+@app.get("/api/logs/ops-brief")
+def get_ops_brief(role: str = Depends(get_role)):
+    if role not in ("support_manager", "it_admin"):
+        raise HTTPException(status_code=403, detail="Manager or IT Admin role required")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
+    conn.row_factory = sqlite3.Row
+
+    high_anomaly = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE anomaly_score > 75").fetchone()[0]
+    unassigned = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE anomaly_score > 75 AND assigned_to IS NULL").fetchone()[0]
+    in_review = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE status = 'in_review'").fetchone()[0]
+    resolved = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE status = 'resolved'").fetchone()[0]
+
+    workload_rows = conn.execute(
+        """
+        SELECT assigned_to,
+               SUM(CASE WHEN status = 'unreviewed' THEN 1 ELSE 0 END) as unreviewed,
+               SUM(CASE WHEN status = 'in_review' THEN 1 ELSE 0 END) as in_review,
+               SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
+               COUNT(*) as total
+        FROM logs
+        WHERE assigned_to IS NOT NULL
+        GROUP BY assigned_to
+        ORDER BY total DESC
+        """
+    ).fetchall()
+    workload = [dict(r) for r in workload_rows]
+
+    oldest_row = conn.execute(
+        "SELECT timestamp FROM logs WHERE status = 'unreviewed' AND assigned_to IS NOT NULL ORDER BY timestamp ASC LIMIT 1"
+    ).fetchone()
+    oldest_unreviewed = oldest_row["timestamp"] if oldest_row else None
+    conn.close()
+
+    context = {
+        "high_anomaly_total": high_anomaly,
+        "unassigned": unassigned,
+        "in_review": in_review,
+        "resolved": resolved,
+        "workload_per_engineer": workload,
+        "oldest_unreviewed_timestamp": oldest_unreviewed,
+    }
+
+    from services.ai_client import generate_ops_brief
+    from services.audit_logger import log_action
+
+    brief = generate_ops_brief(context)
+
+    log_action(
+        actor=role,
+        action="ops_brief_generated",
+        entity_id=0,
+        metadata={"safe_mode": True}
+    )
+
+    import datetime
+    return {
+        "brief": brief,
+        "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
 
 
 # ---------------------------------------------------------------------------

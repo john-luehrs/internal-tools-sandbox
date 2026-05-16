@@ -20,4 +20,5 @@ export interface LogStats {
 export interface ExplanationResponse {
   explanation: string;
   anomaly_score: number;
+  safe_mode?: boolean;
 }

@@ -1,7 +1,7 @@
 import { Log, LogStats, ExplanationResponse } from "./types";
 
 const API_BASE = "/api";
-const DEFAULT_TOKEN = "Bearer token-ops"; // Default to ops_engineer role
+const DEFAULT_TOKEN = "Bearer token-ops"; // Overridden by role context in pages
 
 interface FetchOptions {
   token?: string;
@@ -101,8 +101,18 @@ export async function updateLogStatus(
 export async function explainLog(
   logId: number,
   engineer?: string,
+  safeMode: boolean = true,
   token?: string
 ): Promise<ExplanationResponse> {
-  const query = engineer ? `?engineer=${engineer}` : "";
+  const params = new URLSearchParams();
+  if (engineer) params.append("engineer", engineer);
+  params.append("safe_mode", String(safeMode));
+  const query = params.toString() ? `?${params.toString()}` : "";
   return apiFetch<ExplanationResponse>(`/logs/${logId}/explain${query}`, { token });
+}
+
+export async function getOpsBrief(
+  token?: string
+): Promise<{ brief: string; generated_at: string }> {
+  return apiFetch("/logs/ops-brief", { token });
 }

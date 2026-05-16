@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { getTeamLogs } from "@/lib/api";
+import { TEAM_WORKLOAD_UPDATED_EVENT } from "@/lib/events";
 import { Log } from "@/lib/types";
 
 type EmployeeStats = {
@@ -49,7 +50,16 @@ export default function EmployeeSidebarStats() {
       }
     };
 
+    const handleWorkloadUpdate = () => {
+      load();
+    };
+
     load();
+    window.addEventListener(TEAM_WORKLOAD_UPDATED_EVENT, handleWorkloadUpdate);
+
+    return () => {
+      window.removeEventListener(TEAM_WORKLOAD_UPDATED_EVENT, handleWorkloadUpdate);
+    };
   }, []);
 
   return (
