@@ -10,15 +10,15 @@ This sandbox simulates realistic business friction, internal APIs, synthetic dat
 
 ## Tools
 
-| # | Tool | Friction | Impact |
-|---|------|----------|--------|
-| 1 | [Support Ticket Triage Dashboard](app/support_dashboard/) | 6.2hr avg first response vs 2hr SLA target; agents spend 75% of ticket time searching 4 systems | First-response time target < 2hr; SLA breaches ↓ 18%; CSAT 3.6 → 4.2/5 |
-| 2 | [QA Defect Pattern Analyzer](app/qa_analyzer/) | 10–12hr/sprint manual defect analysis; 22% of tickets are duplicates; 4–6hr/week lost to known-issue rework | Pattern analysis < 30min/sprint; duplicates caught before filing |
-| 3 | [Onboarding Workflow Automation](app/onboarding/) | 14 untracked manual steps; 5–7 days to full access; 40% of hires arrive Day 1 without accounts | Same-day provisioning for standard roles; manager visibility dashboard |
-| 4 | [AI-Assisted Log Analyzer](app/log_analyzer/) | 47min MTTD; 3 incidents/quarter missed for 2+ hrs; 35% of on-call shift spent on log review | MTTD target < 10min; anomaly scoring replaces manual scanning |
-| 5 | [Internal Data Cleanup Tool](app/data_cleanup/) | ~12% duplicate customer records; $40K in billing errors/quarter; 6–8hr/month manual reconciliation | Reconciliation < 30min/month; duplicate and invoice errors eliminated |
-| 6 | [Slack Productivity Bot](app/slack_bot/) | Runbooks split across 3 tools; 45min/week/engineer lost to doc search; 9 engineer-hrs/week team-wide | Doc search < 5min/week/engineer; deploy status and runbooks in one command |
-| 7 | [GitHub Actions Automation](app/github_actions/) | 25–35min of manual steps per deploy cycle; 3 production incidents/quarter from skipped manual steps | Deploy cycle < 5min automated; failures notify Slack immediately |
+| # | Tool | Friction | Impact | Status |
+|---|------|----------|--------|--------|
+| 1 | [Support Ticket Triage Dashboard](app/support_dashboard/) | 6.2hr avg first response vs 2hr SLA target; agents spend 75% of ticket time searching 4 systems | First-response time target < 2hr; SLA breaches ↓ 18%; CSAT 3.6 → 4.2/5 | not started |
+| 2 | [QA Defect Pattern Analyzer](app/qa_analyzer/) | 10–12hr/sprint manual defect analysis; 22% of tickets are duplicates; 4–6hr/week lost to known-issue rework | Pattern analysis < 30min/sprint; duplicates caught before filing | not started |
+| 3 | [Onboarding Workflow Automation](app/onboarding/) | 14 untracked manual steps; 5–7 days to full access; 40% of hires arrive Day 1 without accounts | Same-day provisioning for standard roles; manager visibility dashboard | not started |
+| 4 | [AI-Assisted Log Analyzer](app/log_analyzer/) | 47min MTTD; 3 incidents/quarter missed for 2+ hrs; 35% of on-call shift spent on log review | MTTD target < 10min; anomaly scoring replaces manual scanning | complete |
+| 5 | [Internal Data Cleanup Tool](app/data_cleanup/) | ~12% duplicate customer records; $40K in billing errors/quarter; 6–8hr/month manual reconciliation | Reconciliation < 30min/month; duplicate and invoice errors eliminated | not started |
+| 6 | [Slack Productivity Bot](app/slack_bot/) | Runbooks split across 3 tools; 45min/week/engineer lost to doc search; 9 engineer-hrs/week team-wide | Doc search < 5min/week/engineer; deploy status and runbooks in one command | not started |
+| 7 | [GitHub Actions Automation](app/github_actions/) | 25–35min of manual steps per deploy cycle; 3 production incidents/quarter from skipped manual steps | Deploy cycle < 5min automated; failures notify Slack immediately | not started |
 
 ---
 
@@ -26,7 +26,7 @@ This sandbox simulates realistic business friction, internal APIs, synthetic dat
 
 ```
 internal-tools-sandbox/
-  app/                  # Streamlit dashboards, CLI tools
+  app/                  # Python tool modules (legacy Streamlit + backend logic)
     support_dashboard/
     qa_analyzer/
     onboarding/
@@ -40,6 +40,7 @@ internal-tools-sandbox/
   scripts/              # Data seeders and generators
   services/             # Local mock FastAPI server
   tools/                # Utility scripts, GitHub Actions workflows
+  web/                  # Next.js frontend (Tool 4 v2.0)
   .env.example          # Environment variable template
   requirements.txt      # Python dependencies
 ```
@@ -68,13 +69,22 @@ py scripts/bootstrap.py
 uvicorn services.api:app --reload --port 8000
 ```
 
-### 3. Run a tool dashboard
+### 3. Run dashboards
 
 ```bash
+# Most tools (legacy Streamlit)
 streamlit run app/support_dashboard/app.py
+
+# Tool 4 v2.0 (web-first)
+py -m uvicorn services.api:app --reload --port 8000
+cd web
+npm install
+npm run dev
 ```
 
-If you want a command reminder for any project, run `py scripts/run_tool.py <tool_name>`.
+Open http://localhost:3000/log-analyzer/team for Tool 4.
+
+If you want a command reminder for a project, run `py scripts/run_tool.py <tool_name>`.
 
 ---
 

@@ -2,12 +2,15 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import LogTable from "@/components/LogTable";
 import LogDetail from "@/components/LogDetail";
-import { getAssignedLogs, updateLogStatus, explainLog } from "@/lib/api";
+import { getAssignedLogs, updateLogStatus, updateLogFlag, explainLog } from "@/lib/api";
 import { TEAM_WORKLOAD_UPDATED_EVENT } from "@/lib/events";
 import { useRoleContext } from "@/lib/RoleContext";
 import { Log } from "@/lib/types";
+
+const TEAM_MEMBERS = ["alice", "bob", "carol", "david"];
 
 export default function MyLogsDashboard() {
   const [logs, setLogs] = useState<Log[]>([]);
@@ -18,11 +21,15 @@ export default function MyLogsDashboard() {
   const [explanation, setExplanation] = useState<string | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [flagLoading, setFlagLoading] = useState(false);
   const [statusError, setStatusError] = useState("");
   const [safeMode, setSafeMode] = useState(true);
-  const { token, username } = useRoleContext();
-  const engineer = username;
+  const searchParams = useSearchParams();
+  const { token, username, isManager } = useRoleContext();
+  const selectedEngineer = (searchParams.get("engineer") || "").toLowerCase();
+  const engineer = isManager && TEAM_MEMBERS.includes(selectedEngineer) ? selectedEngineer : username;
   const resolvedToken = token ?? undefined;
+
   useEffect(() => {
     const loadLogs = async () => {
       try {
@@ -72,6 +79,26 @@ export default function MyLogsDashboard() {
       setStatusError(err instanceof Error ? err.message : "Failed to update status");
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  const handleToggleFlag = async (flagged: boolean, reason?: string) => {
+    if (!selectedLog) return;
+    setStatusError("");
+    try {
+      setFlagLoading(true);
+      const result = await updateLogFlag(selectedLog.log_id, flagged, reason, engineer, resolvedToken);
+      if (result.success && result.log) {
+        setLogs((prevLogs) =>
+          prevLogs.map((log) => (log.log_id === selectedLog.log_id ? result.log : log))
+        );
+        setSelectedLog(result.log);
+        window.dispatchEvent(new Event(TEAM_WORKLOAD_UPDATED_EVENT));
+      }
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : "Failed to update flag");
+    } finally {
+      setFlagLoading(false);
     }
   };
 
@@ -141,97 +168,21 @@ export default function MyLogsDashboard() {
       </div>
 
       {selectedLog && (
-        <div className="modal-overlay" onClick={() => setSelectedLog(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">Log {selectedLog.log_id} — Status Update</h2>
-            </div>
-
-            <div style={{ display: "grid", gap: "12px", marginBottom: "16px" }}>
-              <div>
-                <label style={{ color: "var(--muted)", fontSize: "12px" }}>Message</label>
-                <p style={{ margin: "4px 0 0 0", wordBreak: "break-word" }}>{selectedLog.message}</p>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div>
-                  <label style={{ color: "var(--muted)", fontSize: "12px" }}>Service</label>
-                  <p style={{ margin: "4px 0 0 0" }}>{selectedLog.service}</p>
-                </div>
-                <div>
-                  <label style={{ color: "var(--muted)", fontSize: "12px" }}>Anomaly</label>
-                  <p style={{ margin: "4px 0 0 0", fontSize: "16px", fontWeight: "bold" }}>
-                    {selectedLog.anomaly_score}
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ color: "var(--muted)", fontSize: "12px", display: "block", marginBottom: "8px" }}>
-                  Status
-                </label>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  {["unreviewed", "in_review", "resolved"].map((status) => (
-                    <button
-                      key={status}
-                      className={`button button-${selectedLog.status === status ? "primary" : "secondary"} button-small`}
-                      onClick={() => handleStatusChange(status)}
-                      disabled={statusLoading || selectedLog.status === status}
-                    >
-                      {status.replace("_", " ")}
-                    </button>
-                  ))}
-                </div>
-                {statusError && (
-                  <p style={{ color: "var(--color-error)", fontSize: "12px", margin: "6px 0 0 0" }}>
-                    {statusError}
-                  </p>
-                )}
-              </div>
-
-              {explanation && (
-                <div
-                  style={{
-                    background: "var(--border)",
-                    padding: "12px",
-                    borderRadius: "8px",
-                    marginTop: "12px",
-                  }}
-                >
-                  <label style={{ color: "var(--muted)", fontSize: "12px", display: "block" }}>
-                    AI Explanation
-                  </label>
-                  <p style={{ margin: "8px 0 0 0", fontSize: "13px" }}>{explanation}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-footer">
-              {selectedLog.anomaly_score > 75 && (
-                <>
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--muted)", fontSize: "12px" }}>
-                    <input
-                      type="checkbox"
-                      checked={safeMode}
-                      onChange={(e) => setSafeMode(e.target.checked)}
-                    />
-                    Safe AI mode (redact sensitive fields)
-                  </label>
-                  <button
-                    className="button button-primary button-small"
-                    onClick={handleExplain}
-                    disabled={explainLoading}
-                  >
-                    {explainLoading ? "Loading..." : "Get AI Explanation"}
-                  </button>
-                </>
-              )}
-              <button className="button button-secondary button-small" onClick={() => setSelectedLog(null)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <LogDetail
+          log={selectedLog}
+          onClose={() => setSelectedLog(null)}
+          onExplain={handleExplain}
+          onUpdateAssignment={(logId, _assignedTo, status) => handleStatusChange(status)}
+          onToggleFlag={(logId, flagged, reason) => handleToggleFlag(flagged, reason)}
+          isAssignmentLoading={statusLoading}
+          isFlagLoading={flagLoading}
+          saveMessage={statusError ? { text: statusError, type: "error" } : null}
+          safeMode={safeMode}
+          onSafeModeChange={setSafeMode}
+          isLoading={explainLoading}
+          explanation={explanation || undefined}
+          isManager={false}
+        />
       )}
     </div>
   );

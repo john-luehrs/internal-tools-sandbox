@@ -8,13 +8,16 @@ interface LogDetailProps {
   onClose?: () => void;
   onExplain?: () => void;
   onUpdateAssignment?: (logId: number, assignedTo: string | null, status: string) => void;
+  onToggleFlag?: (logId: number, flagged: boolean, reason?: string) => void;
   isAssignmentLoading?: boolean;
+  isFlagLoading?: boolean;
   saveMessage?: { text: string; type: "success" | "error" } | null;
   safeMode?: boolean;
   onSafeModeChange?: (value: boolean) => void;
   isLoading?: boolean;
   explanation?: string;
   isManager?: boolean;
+  canFlag?: boolean;
 }
 
 const TEAM_MEMBERS = ["alice", "bob", "carol", "david"];
@@ -24,23 +27,29 @@ export default function LogDetail({
   onClose,
   onExplain,
   onUpdateAssignment,
+  onToggleFlag,
   isAssignmentLoading,
+  isFlagLoading,
   saveMessage,
   safeMode = true,
   onSafeModeChange,
   isLoading,
   explanation,
   isManager = false,
+  canFlag = true,
 }: LogDetailProps) {
   if (!log) return null;
 
+  const currentlyFlagged = log.is_flagged === 1 || log.is_flagged === true;
   const [assignedToValue, setAssignedToValue] = useState(log.assigned_to || "");
   const [statusValue, setStatusValue] = useState(log.status);
+  const [flagReason, setFlagReason] = useState(log.flagged_reason || "");
 
   useEffect(() => {
     setAssignedToValue(log.assigned_to || "");
     setStatusValue(log.status);
-  }, [log.log_id, log.assigned_to, log.status]);
+    setFlagReason(log.flagged_reason || "");
+  }, [log.log_id, log.assigned_to, log.status, log.flagged_reason]);
 
   const getLevelBadgeClass = (level: string) => {
     switch (level) {
@@ -116,6 +125,46 @@ export default function LogDetail({
               <p style={{ margin: "4px 0 0 0" }}>{log.assigned_to || "Unassigned"}</p>
             </div>
           </div>
+
+          {log.anomaly_score > 75 && (
+            <div style={{ display: "grid", gap: "8px" }}>
+              <label style={{ color: "var(--muted)", fontSize: "12px" }}>Anomaly Flag</label>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span className={currentlyFlagged ? "badge badge-warn" : "badge badge-info"}>
+                  {currentlyFlagged ? "Flagged" : "Not flagged"}
+                </span>
+                <button
+                  className={`button button-${currentlyFlagged ? "secondary" : "primary"} button-small`}
+                  onClick={() => onToggleFlag?.(log.log_id, !currentlyFlagged, currentlyFlagged ? undefined : flagReason)}
+                  disabled={isFlagLoading || !canFlag}
+                >
+                  {isFlagLoading ? "Saving..." : currentlyFlagged ? "Remove Flag" : "Flag Anomaly"}
+                </button>
+              </div>
+              {!canFlag && (
+                <p style={{ margin: 0, color: "var(--muted)", fontSize: "12px" }}>
+                  Only the assigned engineer or manager/admin can flag this log.
+                </p>
+              )}
+              {!currentlyFlagged && (
+                <textarea
+                  className="filter-select"
+                  placeholder="Optional reason for flag"
+                  value={flagReason}
+                  onChange={(e) => setFlagReason(e.target.value)}
+                  disabled={isFlagLoading || !canFlag}
+                  rows={2}
+                  style={{ resize: "vertical", overflowY: "auto", minHeight: "52px", maxHeight: "120px" }}
+                />
+              )}
+              {currentlyFlagged && (
+                <p style={{ margin: 0, color: "var(--muted)", fontSize: "12px" }}>
+                  {log.flagged_reason ? `Reason: ${log.flagged_reason}` : "No reason provided"}
+                  {log.flagged_by ? ` • by ${log.flagged_by}` : ""}
+                </p>
+              )}
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
             <div>
@@ -205,7 +254,7 @@ export default function LogDetail({
             <button
               className="button button-primary button-small"
               onClick={() => onUpdateAssignment?.(log.log_id, assignedToValue || null, statusValue)}
-              disabled={isAssignmentLoading}
+              disabled={isAssignmentLoading || isFlagLoading}
             >
               {isAssignmentLoading ? "Saving..." : "Save Assignment"}
             </button>

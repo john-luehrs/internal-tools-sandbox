@@ -5,6 +5,7 @@ Start with: uvicorn services.api:app --reload --port 8000
 import os
 import sqlite3
 import json
+from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel
@@ -15,6 +16,20 @@ load_dotenv()
 app = FastAPI(title="Internal Tools Sandbox API", version="1.0.0")
 
 DB_DIR = os.path.join(os.path.dirname(__file__), "../db")
+
+
+def ensure_log_flag_columns(conn: sqlite3.Connection) -> None:
+    """Backfill flagging columns for existing local DBs without migrations."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(logs)").fetchall()}
+    if "is_flagged" not in existing:
+        conn.execute("ALTER TABLE logs ADD COLUMN is_flagged INTEGER DEFAULT 0")
+    if "flagged_by" not in existing:
+        conn.execute("ALTER TABLE logs ADD COLUMN flagged_by TEXT")
+    if "flagged_at" not in existing:
+        conn.execute("ALTER TABLE logs ADD COLUMN flagged_at TEXT")
+    if "flagged_reason" not in existing:
+        conn.execute("ALTER TABLE logs ADD COLUMN flagged_reason TEXT")
+    conn.commit()
 
 # ---------------------------------------------------------------------------
 # Simple token auth simulation
@@ -29,6 +44,14 @@ DEMO_TOKENS = {
     "token-carol": "ops_engineer",
     "token-hr": "hr_admin",
     "token-it": "it_admin",
+}
+
+DEMO_ACTORS = {
+    "token-alice": "alice",
+    "token-bob": "bob",
+    "token-carol": "carol",
+    "token-manager": "dana",
+    "token-it": "evan",
 }
 
 
@@ -132,6 +155,7 @@ def list_team_logs(
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
     conn.row_factory = sqlite3.Row
+    ensure_log_flag_columns(conn)
     
     query = "SELECT * FROM logs WHERE 1=1"
     params = []
@@ -165,6 +189,7 @@ def list_assigned_logs(engineer: str, role: str = Depends(get_role)):
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
     conn.row_factory = sqlite3.Row
+    ensure_log_flag_columns(conn)
     rows = conn.execute(
         "SELECT * FROM logs WHERE assigned_to = ? ORDER BY anomaly_score DESC",
         (engineer,)
@@ -179,6 +204,7 @@ def get_logs_stats(role: str = Depends(get_role)):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
+    ensure_log_flag_columns(conn)
     
     total_high = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE anomaly_score > 75").fetchone()[0]
     unassigned = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE anomaly_score > 75 AND assigned_to IS NULL").fetchone()[0]
@@ -207,6 +233,7 @@ def assign_log(log_id: int, req: AssignRequest, role: str = Depends(get_role)):
         raise HTTPException(status_code=403, detail="Only managers can reassign logs")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
+    ensure_log_flag_columns(conn)
     
     # Update assignment and optionally status
     if req.status:
@@ -267,6 +294,141 @@ def update_log_status(log_id: int, req: StatusRequest, role: str = Depends(get_r
     return {"success": True, "log": dict(row) if row else None}
 
 
+class DemoAnomalyRequest(BaseModel):
+    service: Optional[str] = "api-service"
+    message: Optional[str] = "DEMO: sustained error burst detected in checkout path"
+    anomaly_score: Optional[int] = 96
+
+
+@app.post("/api/logs/demo/anomaly")
+def create_demo_anomaly(req: DemoAnomalyRequest, role: str = Depends(get_role)):
+    if role not in ("support_manager", "it_admin"):
+        raise HTTPException(status_code=403, detail="Manager or IT Admin role required")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_log_flag_columns(conn)
+
+    now_ts = datetime.utcnow().isoformat() + "Z"
+    level = "ERROR"
+    message = (req.message or "DEMO: sustained error burst detected in checkout path").strip()
+    service = (req.service or "api-service").strip()
+    score = max(76, min(100, int(req.anomaly_score or 96)))
+
+    conn.execute(
+        """
+        INSERT INTO logs (
+            timestamp,
+            service,
+            level,
+            message,
+            anomaly_score,
+            assigned_to,
+            status,
+            is_flagged,
+            flagged_by,
+            flagged_at,
+            flagged_reason
+        ) VALUES (?, ?, ?, ?, ?, NULL, 'unreviewed', 0, NULL, NULL, NULL)
+        """,
+        (now_ts, service, level, message, score),
+    )
+    conn.commit()
+
+    row = conn.execute("SELECT * FROM logs WHERE log_id = last_insert_rowid()").fetchone()
+    conn.close()
+
+    return {"success": True, "log": dict(row) if row else None}
+
+
+@app.delete("/api/logs/demo/cleanup")
+def cleanup_demo_logs(role: str = Depends(get_role)):
+    if role not in ("support_manager", "it_admin"):
+        raise HTTPException(status_code=403, detail="Manager or IT Admin role required")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM logs WHERE message LIKE 'DEMO:%'")
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "deleted": deleted}
+
+
+class FlagRequest(BaseModel):
+    flagged: bool
+    reason: Optional[str] = None
+    engineer: Optional[str] = None
+
+
+@app.patch("/api/logs/{log_id}/flag")
+def update_log_flag(
+    log_id: int,
+    req: FlagRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in ("ops_engineer", "it_admin", "support_manager"):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_log_flag_columns(conn)
+
+    current = conn.execute("SELECT * FROM logs WHERE log_id = ?", (log_id,)).fetchone()
+    if not current:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Log not found")
+
+    token = (authorization or "").replace("Bearer ", "").strip()
+    actor = DEMO_ACTORS.get(token)
+
+    # Ops engineers can only flag logs currently assigned to themselves.
+    if role == "ops_engineer" and current["assigned_to"] != actor:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Only the assigned engineer can flag this log")
+
+    if req.flagged:
+        conn.execute(
+            """
+            UPDATE logs
+            SET is_flagged = 1,
+                flagged_by = ?,
+                flagged_at = ?,
+                flagged_reason = ?
+            WHERE log_id = ?
+            """,
+            (actor or req.engineer or role, datetime.utcnow().isoformat() + "Z", req.reason, log_id),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE logs
+            SET is_flagged = 0,
+                flagged_by = NULL,
+                flagged_at = NULL,
+                flagged_reason = NULL
+            WHERE log_id = ?
+            """,
+            (log_id,),
+        )
+
+    conn.commit()
+
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor or req.engineer or role,
+        action="log_flag_updated",
+        entity_id=log_id,
+        metadata={"flagged": req.flagged, "reason": req.reason},
+    )
+
+    row = conn.execute("SELECT * FROM logs WHERE log_id = ?", (log_id,)).fetchone()
+    conn.close()
+    return {"success": True, "log": dict(row) if row else None}
+
+
 @app.get("/api/logs/{log_id}/explain")
 def explain_log(
     log_id: int,
@@ -279,6 +441,7 @@ def explain_log(
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
     conn.row_factory = sqlite3.Row
+    ensure_log_flag_columns(conn)
     row = conn.execute("SELECT * FROM logs WHERE log_id = ?", (log_id,)).fetchone()
     conn.close()
     
@@ -326,6 +489,7 @@ def get_ops_brief(role: str = Depends(get_role)):
 
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
     conn.row_factory = sqlite3.Row
+    ensure_log_flag_columns(conn)
 
     high_anomaly = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE anomaly_score > 75").fetchone()[0]
     unassigned = conn.execute("SELECT COUNT(*) as cnt FROM logs WHERE anomaly_score > 75 AND assigned_to IS NULL").fetchone()[0]

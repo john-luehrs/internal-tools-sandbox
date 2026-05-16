@@ -11,13 +11,14 @@ Everything runs **locally**, with **no hosting**, **no external dependencies**, 
 
 ```
 internal-tools-sandbox/
-  /app/                 # Streamlit dashboards, CLI tools, bots
+  /app/                 # Python tool modules, legacy Streamlit UIs, bots
   /data/                # Synthetic CSV/JSON datasets
   /db/                  # Local SQLite databases
   /docs/                # Documentation (this file, API specs, updates)
   /scripts/             # Seeders, data generators, utilities
   /services/            # Local mock APIs (FastAPI/Express)
   /tools/               # Internal scripts, GitHub Actions, bots
+  /web/                 # Next.js frontend for Tool 4 v2.0
   README.md
 ```
 
@@ -35,7 +36,7 @@ Each tool includes:
 - Two rounds of spec updates  
 - Changelog  
 - README with friction → root cause → tool → impact  
-- Local‑only implementation (Streamlit, Python, SQLite)
+- Local‑only implementation (Python, SQLite, Streamlit prototypes, and web UI for Tool 4)
 
 ---
 

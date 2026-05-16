@@ -7,6 +7,10 @@ export interface Log {
   anomaly_score: number;
   assigned_to: string | null;
   status: "unreviewed" | "in_review" | "resolved";
+  is_flagged?: number;
+  flagged_by?: string | null;
+  flagged_at?: string | null;
+  flagged_reason?: string | null;
 }
 
 export interface LogStats {

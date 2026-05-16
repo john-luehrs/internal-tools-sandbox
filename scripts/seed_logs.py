@@ -55,7 +55,11 @@ def seed_logs():
             message TEXT,
             anomaly_score INTEGER,
             assigned_to TEXT,
-            status TEXT DEFAULT 'unreviewed'
+            status TEXT DEFAULT 'unreviewed',
+            is_flagged INTEGER DEFAULT 0,
+            flagged_by TEXT,
+            flagged_at TEXT,
+            flagged_reason TEXT
         )
     """)
     now = datetime.utcnow()
@@ -80,8 +84,12 @@ def seed_logs():
             anomaly,
             assigned_to,
             status,
+            0,
+            None,
+            None,
+            None,
         ))
-    conn.executemany("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    conn.executemany("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     conn.commit()
     conn.close()
 

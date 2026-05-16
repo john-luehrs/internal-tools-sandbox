@@ -4,6 +4,12 @@ Version 2.0 of the Log Analyzer web app adds persona-based authentication, role-
 
 Next.js + React frontend for the log analyzer tool, calling FastAPI backend at `localhost:8000`.
 
+## Quick Evaluator Notes
+
+- This repo demonstrates role-aware incident triage UX, not just static dashboard visuals.
+- Best demo login for full workflow: Dana (support manager).
+- Key behavior to verify: escalation at +5/+10/+15, then automatic suppression when status moves from `unreviewed` to `in_review`.
+
 ## Setup
 
 ```bash
@@ -23,11 +29,33 @@ Open http://localhost:3000
 - Manager Ops Brief with safe AI summarization and audit-backed invocation
 - My Logs automatically follows the signed-in persona instead of a manual engineer picker
 
+## Demo Script (60-90 Seconds)
+
+1. Open `/log-analyzer/team` as Dana.
+2. In the sidebar, open MTTD Notification Demo and click Show if needed.
+3. Click Start Demo.
+4. Trigger +5m, +10m, +15m and observe warning -> critical -> escalation progression.
+5. Open the demo log and move it to `in_review` to show suppression behavior.
+6. Set it back to `unreviewed` to show notification resume behavior.
+7. Click Cleanup to reset state.
+
 ## Architecture
 
 - **Backend API**: `services/api.py` (FastAPI, runs on :8000)
 - **Frontend**: Next.js (React + TypeScript, runs on :3000)
 - **Proxy**: `next.config.ts` rewrites `/api/*` → `http://localhost:8000/api/*`
+
+### Architecture Flow (Mermaid)
+
+```mermaid
+flowchart LR
+	UI[Next.js UI] --> APIClient[lib/api.ts]
+	APIClient --> FastAPI[services/api.py]
+	FastAPI --> LogsDB[(db/logs.db)]
+	FastAPI --> AI[AI + redaction + audit services]
+	FastAPI --> APIClient
+	APIClient --> UI
+```
 
 ## Tech Stack
 

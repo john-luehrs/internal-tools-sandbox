@@ -9,6 +9,8 @@ interface LogTableProps {
 }
 
 export default function LogTable({ logs, onSelectLog }: LogTableProps) {
+  const isFlagged = (log: Log) => log.is_flagged === 1 || log.is_flagged === true;
+
   const getLevelBadgeClass = (level: string) => {
     switch (level) {
       case "ERROR":
@@ -61,6 +63,7 @@ export default function LogTable({ logs, onSelectLog }: LogTableProps) {
             <th>Level</th>
             <th>Message</th>
             <th>Anomaly</th>
+            <th>Flag</th>
             <th>Assigned To</th>
             <th>Status</th>
           </tr>
@@ -68,7 +71,7 @@ export default function LogTable({ logs, onSelectLog }: LogTableProps) {
         <tbody>
           {logs.length === 0 ? (
             <tr>
-              <td colSpan={7} style={{ textAlign: "center", color: "var(--muted)" }}>
+              <td colSpan={8} style={{ textAlign: "center", color: "var(--muted)" }}>
                 No logs found
               </td>
             </tr>
@@ -90,6 +93,13 @@ export default function LogTable({ logs, onSelectLog }: LogTableProps) {
                 </td>
                 <td style={{ fontWeight: log.anomaly_score > 75 ? "bold" : "normal" }}>
                   {log.anomaly_score}
+                </td>
+                <td>
+                  {isFlagged(log) ? (
+                    <span className="badge badge-warn">flagged</span>
+                  ) : (
+                    <span style={{ color: "var(--muted)", fontSize: "12px" }}>-</span>
+                  )}
                 </td>
                 <td>{log.assigned_to || "—"}</td>
                 <td>

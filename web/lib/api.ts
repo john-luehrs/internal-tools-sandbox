@@ -98,6 +98,24 @@ export async function updateLogStatus(
   });
 }
 
+export async function updateLogFlag(
+  logId: number,
+  flagged: boolean,
+  reason?: string,
+  engineer?: string,
+  token?: string
+): Promise<{ success: boolean; log: Log | null }> {
+  return apiFetch(`/logs/${logId}/flag`, {
+    token,
+    method: "PATCH",
+    body: {
+      flagged,
+      reason,
+      engineer,
+    },
+  });
+}
+
 export async function explainLog(
   logId: number,
   engineer?: string,
@@ -115,4 +133,24 @@ export async function getOpsBrief(
   token?: string
 ): Promise<{ brief: string; generated_at: string }> {
   return apiFetch("/logs/ops-brief", { token });
+}
+
+export async function createDemoAnomalyLog(
+  payload: { service?: string; message?: string; anomaly_score?: number } = {},
+  token?: string
+): Promise<{ success: boolean; log: Log | null }> {
+  return apiFetch("/logs/demo/anomaly", {
+    token,
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function cleanupDemoLogs(
+  token?: string
+): Promise<{ success: boolean; deleted: number }> {
+  return apiFetch("/logs/demo/cleanup", {
+    token,
+    method: "DELETE",
+  });
 }
