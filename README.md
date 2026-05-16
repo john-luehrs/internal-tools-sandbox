@@ -52,7 +52,7 @@ internal-tools-sandbox/
 ### 1. Clone and bootstrap once
 
 ```bash
-git clone https://github.com/yourusername/internal-tools-sandbox.git
+git clone https://github.com/john-luehrs/internal-tools-sandbox.git
 cd internal-tools-sandbox
 
 py -m venv .venv
