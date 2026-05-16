@@ -69,20 +69,21 @@ py scripts/bootstrap.py
 uvicorn services.api:app --reload --port 8000
 ```
 
-### 3. Run dashboards
+### 3. Run Tool 4 (AI-Assisted Log Analyzer)
 
 ```bash
-# Most tools (legacy Streamlit)
-streamlit run app/support_dashboard/app.py
-
-# Tool 4 v2.0 (web-first)
+# Terminal 1 — API server
 py -m uvicorn services.api:app --reload --port 8000
+
+# Terminal 2 — Web UI
 cd web
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000/log-analyzer/team for Tool 4.
+Open http://localhost:3000/log-analyzer/team.
+
+Other tools are not yet built. Each will include its own run instructions when complete.
 
 If you want a command reminder for a project, run `py scripts/run_tool.py <tool_name>`.
 
