@@ -11,14 +11,13 @@
 
 ## Running
 
-```bash
-streamlit run app/slack_bot/streamlit_app.py
-```
+Current status: this tool is not part of the active web platform release.
 
-Or run the CLI:
+CLI mode is still available:
 
 ```bash
 py app/slack_bot/app.py
 ```
 
 Requires `data/runbooks.json` — run `py scripts/bootstrap.py` first.
+Use `py scripts/run_tool.py slack_bot` for command guidance when this tool is resumed.

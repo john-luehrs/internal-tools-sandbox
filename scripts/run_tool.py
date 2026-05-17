@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 TOOL_COMMANDS = {
     "support_dashboard": ["streamlit", "run", "app/support_dashboard/app.py"],
-    "qa_analyzer": ["streamlit", "run", "app/qa_analyzer/app.py"],
+    "qa_analyzer": ["web", "ui"],
     "onboarding": ["streamlit", "run", "app/onboarding/app.py"],
     "log_analyzer": ["web", "ui"],
     "log_analyzer_legacy": ["streamlit", "run", "app/log_analyzer/app.py"],
@@ -34,10 +34,13 @@ def main() -> None:
         raise SystemExit(1)
 
     print("Run this command from the repo root:")
-    if tool_name == "log_analyzer":
+    if tool_name in ("log_analyzer", "qa_analyzer"):
         print("py -m uvicorn services.api:app --reload --port 8000")
         print("cd web && npm run dev")
-        print("Open http://localhost:3000/log-analyzer/team")
+        if tool_name == "log_analyzer":
+            print("Open http://localhost:3000/log-analyzer/team")
+        else:
+            print("Open http://localhost:3000/qa-analyzer/sprint")
     else:
         print(" ".join(command))
 

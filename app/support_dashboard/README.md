@@ -11,11 +11,10 @@
 
 ## Running
 
-```bash
-streamlit run app/support_dashboard/app.py
-```
+Current status: this tool is not part of the active web platform release.
 
-Requires `db/support.db` — run `py scripts/seed_all.py` first.
+Requires `db/support.db` — run `py scripts/seed_all.py` first for data setup.
+Use `py scripts/run_tool.py support_dashboard` for command guidance when this tool is resumed.
 
 ## Security
 

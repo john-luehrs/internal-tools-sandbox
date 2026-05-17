@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import EmployeeSidebarStats from "@/components/EmployeeSidebarStats";
 import { useRole } from "@/hooks/useRole";
 import { ROLES, PERSONAS, PersonaKey, Role } from "@/lib/auth";
@@ -11,6 +12,10 @@ const LOGIN_PASSWORD = "password";
 export default function AuthWrapper({ children }: { children: React.ReactNode }) {
   const { role, token, username, isManager, isAuthenticated, login, logout } = useRole();
   const [hydrated, setHydrated] = useState(false);
+  const pathname = usePathname();
+
+  const qaRoles = new Set<Role>(["qa_engineer", "qa_lead", "qa_manager"]);
+  const isQaRole = qaRoles.has(role as Role);
 
   useEffect(() => {
     setHydrated(true);
@@ -28,9 +33,16 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
         <nav className="sidebar">
           <div className="sidebar-section">
             <h2 className="sidebar-title">Tools</h2>
-            <a href="/log-analyzer/team" className="nav-link">
-              📊 Log Analyzer
-            </a>
+            {!isQaRole ? (
+              <a href="/log-analyzer/team" className={`nav-link${pathname?.startsWith("/log-analyzer") ? " active" : ""}`}>
+                📊 Log Analyzer
+              </a>
+            ) : null}
+            {isQaRole ? (
+              <a href="/qa-analyzer/sprint" className={`nav-link${pathname?.startsWith("/qa-analyzer") ? " active" : ""}`}>
+                🧪 QA Analyzer
+              </a>
+            ) : null}
           </div>
           <div className="sidebar-user-section">
             <div className="sidebar-user-role">
@@ -52,12 +64,16 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
 }
 
 function LoginScreen({ onLogin }: { onLogin: (key: PersonaKey) => void }) {
-  const [selected, setSelected] = useState<PersonaKey>("alice");
+  const [selected, setSelected] = useState<PersonaKey | null>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selected) {
+      setError("Select a persona.");
+      return;
+    }
     if (password !== LOGIN_PASSWORD) {
       setError("Incorrect password.");
       return;
@@ -67,7 +83,8 @@ function LoginScreen({ onLogin }: { onLogin: (key: PersonaKey) => void }) {
   };
 
   const engineers: PersonaKey[] = ["alice", "bob", "carol"];
-  const managers: PersonaKey[] = ["dana", "evan"];
+  const managers: PersonaKey[] = ["dana", "evan", "morgan"];
+  const qaRoles: PersonaKey[] = ["quinn", "riley", "taylor"];
 
   return (
     <div className="login-screen">
@@ -89,8 +106,17 @@ function LoginScreen({ onLogin }: { onLogin: (key: PersonaKey) => void }) {
 
         <div className="persona-section">
           <p className="persona-section-label">Management</p>
-          <div className="persona-grid persona-grid-2">
+          <div className="persona-grid persona-grid-3">
             {managers.map((key) => (
+              <PersonaCard key={key} personaKey={key} selected={selected === key} onSelect={setSelected} />
+            ))}
+          </div>
+        </div>
+
+        <div className="persona-section">
+          <p className="persona-section-label">QA Personas</p>
+          <div className="persona-grid persona-grid-3">
+            {qaRoles.map((key) => (
               <PersonaCard key={key} personaKey={key} selected={selected === key} onSelect={setSelected} />
             ))}
           </div>
@@ -113,8 +139,8 @@ function LoginScreen({ onLogin }: { onLogin: (key: PersonaKey) => void }) {
 
           {error && <p className="login-error">{error}</p>}
 
-          <button type="submit" className="button button-primary" style={{ width: "100%" }}>
-            Sign in as {PERSONAS[selected].name}
+          <button type="submit" className="button button-primary" style={{ width: "100%" }} disabled={!selected}>
+            {selected ? `Sign in as ${PERSONAS[selected].name}` : "Select a persona to sign in"}
           </button>
         </form>
       </div>

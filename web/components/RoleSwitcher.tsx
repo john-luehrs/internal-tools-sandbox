@@ -2,10 +2,14 @@
 
 import React from "react";
 import { useRole } from "@/hooks/useRole";
-import { ROLES, Role } from "@/lib/auth";
+import { ROLES } from "@/lib/auth";
 
 export default function RoleSwitcher() {
-  const { role, setRole } = useRole();
+  const { role } = useRole();
+
+  if (!role) {
+    return null;
+  }
 
   return (
     <div className="role-switcher">
@@ -13,7 +17,8 @@ export default function RoleSwitcher() {
       <select
         className="filter-select"
         value={role}
-        onChange={(e) => setRole(e.target.value as Role)}
+        onChange={() => undefined}
+        disabled
         style={{ width: "100%", fontSize: "12px" }}
       >
         {Object.entries(ROLES).map(([key, { label }]) => (

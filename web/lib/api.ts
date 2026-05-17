@@ -1,4 +1,13 @@
-import { Log, LogStats, ExplanationResponse } from "./types";
+import {
+  Log,
+  LogStats,
+  ExplanationResponse,
+  QASprint,
+  QADefect,
+  QANote,
+  QAClusterResult,
+  QADuplicateResult,
+} from "./types";
 
 const API_BASE = "/api";
 const DEFAULT_TOKEN = "Bearer token-ops"; // Overridden by role context in pages
@@ -153,4 +162,116 @@ export async function cleanupDemoLogs(
     token,
     method: "DELETE",
   });
+}
+
+// QA API
+export async function getQASprints(token?: string): Promise<QASprint[]> {
+  return apiFetch<QASprint[]>("/qa/sprints", { token });
+}
+
+export async function getQADefects(
+  filters: {
+    sprints?: string[];
+    severity?: string;
+    component?: string;
+    status?: string;
+    assignee?: string;
+  } = {},
+  token?: string
+): Promise<QADefect[]> {
+  const params = new URLSearchParams();
+  if (filters.sprints?.length) params.append("sprints", filters.sprints.join(","));
+  if (filters.severity) params.append("severity", filters.severity);
+  if (filters.component) params.append("component", filters.component);
+  if (filters.status) params.append("status", filters.status);
+  if (filters.assignee) params.append("assignee", filters.assignee);
+
+  const query = params.toString();
+  return apiFetch<QADefect[]>(`/qa/defects${query ? `?${query}` : ""}`, { token });
+}
+
+export async function addQADefectNote(
+  defectId: number,
+  noteBody: string,
+  token?: string
+): Promise<{ success: boolean; note: QANote | null }> {
+  return apiFetch(`/qa/defects/${defectId}/notes`, {
+    token,
+    method: "POST",
+    body: { note_body: noteBody },
+  });
+}
+
+export async function getQADefectNotes(
+  defectId: number,
+  token?: string
+): Promise<QANote[]> {
+  return apiFetch<QANote[]>(`/qa/defects/${defectId}/notes`, { token });
+}
+
+export async function updateQADefectStatus(
+  defectId: number,
+  status: string,
+  resolutionReason?: string,
+  token?: string
+): Promise<{ success: boolean; defect: QADefect | null }> {
+  return apiFetch(`/qa/defects/${defectId}/status`, {
+    token,
+    method: "PATCH",
+    body: {
+      status,
+      resolution_reason: resolutionReason,
+    },
+  });
+}
+
+export async function assignQADefect(
+  defectId: number,
+  assignee: string | null,
+  token?: string
+): Promise<{ success: boolean; defect: QADefect | null }> {
+  return apiFetch(`/qa/defects/${defectId}/assign`, {
+    token,
+    method: "PATCH",
+    body: { assignee },
+  });
+}
+
+export async function runQACluster(
+  sprints: string[],
+  token?: string
+): Promise<QAClusterResult> {
+  return apiFetch<QAClusterResult>("/qa/analysis/cluster", {
+    token,
+    method: "POST",
+    body: { sprints },
+  });
+}
+
+export async function runQADuplicateDetection(
+  sprints: string[],
+  token?: string
+): Promise<QADuplicateResult> {
+  return apiFetch<QADuplicateResult>("/qa/analysis/duplicates", {
+    token,
+    method: "POST",
+    body: { sprints },
+  });
+}
+
+export function getQAReportExportUrl(filters: {
+  sprints?: string[];
+  severity?: string;
+  component?: string;
+  status?: string;
+  assignee?: string;
+} = {}): string {
+  const params = new URLSearchParams();
+  if (filters.sprints?.length) params.append("sprints", filters.sprints.join(","));
+  if (filters.severity) params.append("severity", filters.severity);
+  if (filters.component) params.append("component", filters.component);
+  if (filters.status) params.append("status", filters.status);
+  if (filters.assignee) params.append("assignee", filters.assignee);
+  const query = params.toString();
+  return `/api/qa/reports/export.csv${query ? `?${query}` : ""}`;
 }

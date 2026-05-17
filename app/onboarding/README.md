@@ -11,8 +11,7 @@
 
 ## Running
 
-```bash
-streamlit run app/onboarding/app.py
-```
+Current status: this tool is not part of the active web platform release.
 
-Requires `db/onboarding.db` — run `py scripts/bootstrap.py` first.
+Requires `db/onboarding.db` — run `py scripts/bootstrap.py` first for data setup.
+Use `py scripts/run_tool.py onboarding` for command guidance when this tool is resumed.

@@ -34,6 +34,7 @@ function buildMyStats(logs: Log[], username: string) {
   const myFlagged = mine.filter((l) => l.is_flagged === 1 || l.is_flagged === true);
   return {
     total_high_anomaly: mine.filter((l) => l.anomaly_score > 75).length,
+    unassigned_count: 0,
     unreviewed_count: mine.filter((l) => l.status === "unreviewed").length,
     in_review_count: mine.filter((l) => l.status === "in_review").length,
     resolved_count: mine.filter((l) => l.status === "resolved").length,
@@ -73,6 +74,17 @@ export default function TeamDashboard() {
   const [briefLoading, setBriefLoading] = useState(false);
   const [demoToast, setDemoToast] = useState<{ tone: "warn" | "critical"; message: string } | null>(null);
   const [demoBanner, setDemoBanner] = useState<string | null>(null);
+
+  if (!["ops_engineer", "support_manager", "it_admin"].includes(role)) {
+    return (
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title">Log Analyzer</h2>
+        </div>
+        <p>This page is available to Ops and Support personas only.</p>
+      </div>
+    );
+  }
 
   // Load logs and stats
   useEffect(() => {
@@ -244,8 +256,9 @@ export default function TeamDashboard() {
         : await updateLogStatus(logId, normalizedStatus ?? "unreviewed", resolvedToken);
 
       if (result.success && result.log) {
+        const updatedLog = result.log;
         setLogs((prevLogs) =>
-          prevLogs.map((log) => (log.log_id === logId ? result.log : log))
+          prevLogs.map((log) => (log.log_id === logId ? updatedLog : log))
         );
         window.dispatchEvent(new Event(TEAM_WORKLOAD_UPDATED_EVENT));
         let successText = "Saved";
@@ -272,8 +285,9 @@ export default function TeamDashboard() {
       setFlagLoading(true);
       const result = await updateLogFlag(logId, flagged, reason, username, resolvedToken);
       if (result.success && result.log) {
+        const updatedLog = result.log;
         setLogs((prevLogs) =>
-          prevLogs.map((log) => (log.log_id === logId ? result.log : log))
+          prevLogs.map((log) => (log.log_id === logId ? updatedLog : log))
         );
         setSaveMessage({ text: flagged ? "Anomaly flagged" : "Flag removed", type: "success" });
       }

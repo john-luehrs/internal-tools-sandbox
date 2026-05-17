@@ -11,8 +11,7 @@
 
 ## Running
 
-```bash
-streamlit run app/data_cleanup/app.py
-```
+Current status: this tool is not part of the active web platform release.
 
-Requires `db/finance.db` — run `py scripts/bootstrap.py` first.
+Requires `db/finance.db` — run `py scripts/bootstrap.py` first for data setup.
+Use `py scripts/run_tool.py data_cleanup` for command guidance when this tool is resumed.

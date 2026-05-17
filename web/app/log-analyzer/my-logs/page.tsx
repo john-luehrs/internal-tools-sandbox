@@ -25,10 +25,21 @@ export default function MyLogsDashboard() {
   const [statusError, setStatusError] = useState("");
   const [safeMode, setSafeMode] = useState(true);
   const searchParams = useSearchParams();
-  const { token, username, isManager } = useRoleContext();
+  const { token, username, isManager, role } = useRoleContext();
   const selectedEngineer = (searchParams.get("engineer") || "").toLowerCase();
   const engineer = isManager && TEAM_MEMBERS.includes(selectedEngineer) ? selectedEngineer : username;
   const resolvedToken = token ?? undefined;
+
+  if (!["ops_engineer", "support_manager", "it_admin"].includes(role)) {
+    return (
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title">Log Analyzer - My Logs</h2>
+        </div>
+        <p>This page is available to Ops and Support personas only.</p>
+      </div>
+    );
+  }
 
   useEffect(() => {
     const loadLogs = async () => {
@@ -69,10 +80,11 @@ export default function MyLogsDashboard() {
       const result = await updateLogStatus(selectedLog.log_id, status, resolvedToken);
 
       if (result.success && result.log) {
+        const updatedLog = result.log;
         setLogs((prevLogs) =>
-          prevLogs.map((log) => (log.log_id === selectedLog.log_id ? result.log : log))
+          prevLogs.map((log) => (log.log_id === selectedLog.log_id ? updatedLog : log))
         );
-        setSelectedLog(result.log);
+        setSelectedLog(updatedLog);
         window.dispatchEvent(new Event(TEAM_WORKLOAD_UPDATED_EVENT));
       }
     } catch (err) {
@@ -89,10 +101,11 @@ export default function MyLogsDashboard() {
       setFlagLoading(true);
       const result = await updateLogFlag(selectedLog.log_id, flagged, reason, engineer, resolvedToken);
       if (result.success && result.log) {
+        const updatedLog = result.log;
         setLogs((prevLogs) =>
-          prevLogs.map((log) => (log.log_id === selectedLog.log_id ? result.log : log))
+          prevLogs.map((log) => (log.log_id === selectedLog.log_id ? updatedLog : log))
         );
-        setSelectedLog(result.log);
+        setSelectedLog(updatedLog);
         window.dispatchEvent(new Event(TEAM_WORKLOAD_UPDATED_EVENT));
       }
     } catch (err) {

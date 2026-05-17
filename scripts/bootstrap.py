@@ -37,9 +37,9 @@ def main() -> None:
     print("\nBootstrap complete. You can start working on any project now.")
     print("Examples:")
     print("  streamlit run app/support_dashboard/app.py")
-    print("  streamlit run app/qa_analyzer/app.py")
+    print("  py -m uvicorn services.api:app --reload --port 8000")
+    print("  cd web && npm run dev  # open /qa-analyzer/sprint or /log-analyzer/team")
     print("  streamlit run app/onboarding/app.py")
-    print("  uvicorn services.api:app --reload --port 8000")
 
 
 if __name__ == "__main__":

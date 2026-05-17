@@ -11,7 +11,7 @@ Everything runs **locally**, with **no hosting**, **no external dependencies**, 
 
 ```
 internal-tools-sandbox/
-  /app/                 # Streamlit dashboards, CLI tools, bots
+  /app/                 # Python tool modules, CLI tools, and domain logic assets
   /data/                # Synthetic CSV/JSON datasets
   /db/                  # Local SQLite databases
   /docs/                # Documentation (this file, API specs, updates)
@@ -35,7 +35,7 @@ Each tool includes:
 - Two rounds of spec updates  
 - Changelog  
 - README with friction → root cause → tool → impact  
-- Local‑only implementation (Streamlit, Python, SQLite)
+- Local-only implementation (FastAPI + Next.js for active tools, Python + SQLite for data/services)
 
 ---
 
@@ -264,7 +264,7 @@ Everything runs locally:
 - SQLite databases in `/db/`  
 - CSV/JSON data in `/data/`  
 - Mock APIs in `/services/`  
-- Streamlit dashboards in `/app/`  
+- Web dashboards in `/web/` backed by FastAPI in `/services/`  
 - Python scripts in `/scripts/`  
 - No hosting required  
 - No external APIs required  
@@ -314,7 +314,10 @@ Examples:
 
 ```
 pip install -r requirements.txt
-streamlit run app/<tool>/app.py
+py -m uvicorn services.api:app --reload --port 8000
+cd web
+npm install
+npm run dev
 ```
 
 Everything works offline.

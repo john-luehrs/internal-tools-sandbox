@@ -1,8 +1,6 @@
-# Log Analyzer Web UI
+# Internal Tools Web Platform
 
-Version 2.0 of the Log Analyzer web app adds persona-based authentication, role-aware dashboards, manager analytics, and tighter workflow controls on top of the original queue and AI explanation flows.
-
-Next.js + React frontend for the log analyzer tool, calling FastAPI backend at `localhost:8000`.
+Current release provides a shared Next.js + React frontend for Tool 4 (Log Analyzer) and Tool 2 (QA Defect Pattern Analyzer), backed by FastAPI on `localhost:8000`.
 
 ## Quick Evaluator Notes
 
@@ -13,19 +11,26 @@ Next.js + React frontend for the log analyzer tool, calling FastAPI backend at `
 ## Setup
 
 ```bash
+# Terminal 1 (from repo root)
+py -m uvicorn services.api:app --reload --port 8000
+
+# Terminal 2
 cd web
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000
+Open one of these routes:
 
-## Version 2.0 Highlights
+- http://localhost:3000/log-analyzer/team
+- http://localhost:3000/qa-analyzer/sprint
 
-- Persona-based demo login for Alice, Bob, Carol, Dana, and Evan
-- Distinct ops engineer, support manager, and IT admin experiences
-- Team queue remains visible to ops users, while assignment controls stay manager-only
-- Personal stats for ops users and timeline analytics for manager-level users
+## Current Highlights
+
+- Persona-based demo login for Alice, Bob, Carol, Dana, Evan, Quinn, Riley, Taylor, and Morgan
+- Distinct ops/support and QA role experiences with RBAC-enforced endpoints
+- Log Analyzer and QA Analyzer share one authentication shell with role-based tool visibility
+- Personal stats for ops users, timeline analytics for manager-level users, and QA sprint triage modal workflow
 - Manager Ops Brief with safe AI summarization and audit-backed invocation
 - My Logs automatically follows the signed-in persona instead of a manual engineer picker
 
@@ -38,6 +43,12 @@ Open http://localhost:3000
 5. Open the demo log and move it to `in_review` to show suppression behavior.
 6. Set it back to `unreviewed` to show notification resume behavior.
 7. Click Cleanup to reset state.
+
+Optional QA pass:
+
+1. Sign in as Morgan and open `/qa-analyzer/sprint`.
+2. Run clustering and duplicate detection for one sprint.
+3. Open a defect, add a triage note, and confirm it appears in note history.
 
 ## Architecture
 
@@ -93,6 +104,15 @@ Individual dashboard with:
 - Log table for the current user's queue
 - Status workflow (unreviewed → in_review → resolved)
 
+### `/qa-analyzer/sprint`
+
+QA dashboard with:
+- Sprint-centered defect queue and filter controls
+- AI clustering and duplicate detection previews
+- Duplicate summary/detail split layout with confidence and rationale
+- Defect triage modal with keyboard navigation, assignment, status actions, and note history
+- CSV export and role-enforced action permissions
+
 ## API Integration
 
 See `lib/api.ts` for all fetch wrappers.
@@ -100,14 +120,21 @@ See `lib/api.ts` for all fetch wrappers.
 Available demo personas:
 
 ```typescript
-alice -> Bearer token-alice
-bob   -> Bearer token-bob
-carol -> Bearer token-carol
-dana  -> Bearer token-manager
-evan  -> Bearer token-it
+alice  -> Bearer token-alice
+bob    -> Bearer token-bob
+carol  -> Bearer token-carol
+dana   -> Bearer token-manager
+evan   -> Bearer token-it
+quinn  -> Bearer token-qa
+riley  -> Bearer token-qa-lead
+taylor -> Bearer token-qa-taylor
+morgan -> Bearer token-qa-manager
 ```
 
-Manager-only workflow endpoints enforce assignment permissions on the backend. Ops users can still update log status through the status endpoint.
+RBAC is enforced on backend endpoints. Examples:
+- Ops users cannot perform manager-only log assignment actions.
+- QA engineers cannot mark `duplicate_merged`.
+- QA engineers cannot update defects assigned to another engineer.
 
 ## Running Both Services
 
@@ -121,4 +148,7 @@ cd sandbox/web
 npm run dev
 ```
 
-Then visit http://localhost:3000/log-analyzer/team
+Then visit:
+
+- http://localhost:3000/log-analyzer/team
+- http://localhost:3000/qa-analyzer/sprint

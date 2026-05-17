@@ -154,10 +154,6 @@ The primary v3.0 dashboard flow is web-based:
 - Team Dashboard: `/log-analyzer/team`
 - Individual Dashboard: `/log-analyzer/my-logs`
 
-### Legacy Streamlit Prototypes (optional)
-
-The original Streamlit screens are still available for reference in `app/log_analyzer/app.py` and `app/log_analyzer/individual.py`, but they are no longer the primary v3.0 dashboard run path.
-
 ## Demo Personas
 
 - Alice, Bob, Carol: ops engineers with personal queue views and status updates

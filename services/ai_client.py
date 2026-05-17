@@ -43,11 +43,33 @@ def get_ai_summary(text: str, context: str = "") -> str:
 
 def cluster_defects(descriptions: list[str]) -> list[dict]:
     if _is_mock() or not descriptions:
-        return [
-            {"pattern": "Authentication failures", "defects": descriptions[:2] if descriptions else []},
-            {"pattern": "UI rendering issues", "defects": descriptions[2:4] if len(descriptions) > 2 else []},
-            {"pattern": "Data sync errors", "defects": descriptions[4:] if len(descriptions) > 4 else []},
-        ]
+        buckets = {
+            "Checkout and Pricing Drift": ["checkout", "tax", "promo", "coupon", "pricing"],
+            "Payment and Retry Idempotency": ["payment", "gateway", "retry", "duplicate order", "intent"],
+            "Inventory and Fulfillment Timing": ["inventory", "reservation", "fulfillment", "warehouse", "sku"],
+            "Event and Notification Ordering": ["notification", "event", "queue", "confirmation", "callback"],
+        }
+        grouped = {pattern: [] for pattern in buckets}
+        misc = []
+
+        for text in descriptions:
+            lowered = text.lower()
+            matched = False
+            for pattern, keywords in buckets.items():
+                if any(k in lowered for k in keywords):
+                    grouped[pattern].append(text)
+                    matched = True
+                    break
+            if not matched:
+                misc.append(text)
+
+        result = []
+        for pattern, items in grouped.items():
+            if items:
+                result.append({"pattern": pattern, "defects": items})
+        if misc:
+            result.append({"pattern": "General Defect Drift", "defects": misc})
+        return result
     client = _get_client()
     text = "\n".join(f"- {d}" for d in descriptions[:50])
     response = client.chat.completions.create(
@@ -69,9 +91,34 @@ def cluster_defects(descriptions: list[str]) -> list[dict]:
 
 def find_duplicates(records: list[dict]) -> list[list[dict]]:
     if _is_mock() or len(records) < 2:
-        if len(records) >= 2:
-            return [[records[0], records[1]]]
-        return []
+        groups = []
+        used = set()
+
+        def _score(a: str, b: str) -> float:
+            a_tokens = {tok for tok in a.lower().replace("-", " ").split() if len(tok) > 3}
+            b_tokens = {tok for tok in b.lower().replace("-", " ").split() if len(tok) > 3}
+            if not a_tokens or not b_tokens:
+                return 0.0
+            overlap = len(a_tokens & b_tokens)
+            union = len(a_tokens | b_tokens)
+            return overlap / union
+
+        for i, rec in enumerate(records):
+            if rec["defect_id"] in used:
+                continue
+            current = [rec]
+            for j in range(i + 1, len(records)):
+                other = records[j]
+                if other["defect_id"] in used:
+                    continue
+                if _score(rec["description"], other["description"]) >= 0.5:
+                    current.append(other)
+                    used.add(other["defect_id"])
+            if len(current) > 1:
+                used.add(rec["defect_id"])
+                groups.append(current)
+
+        return groups
     client = _get_client()
     text = "\n".join(f"#{r['defect_id']}: {r['description']}" for r in records[:30])
     response = client.chat.completions.create(

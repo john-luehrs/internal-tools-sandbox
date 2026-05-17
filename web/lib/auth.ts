@@ -2,6 +2,9 @@ export const ROLES = {
   ops_engineer: { label: "Ops Engineer" },
   support_manager: { label: "Support Manager" },
   it_admin: { label: "IT Admin" },
+  qa_engineer: { label: "QA Engineer" },
+  qa_lead: { label: "QA Lead" },
+  qa_manager: { label: "QA Manager" },
 } as const;
 
 export type Role = keyof typeof ROLES;
@@ -40,6 +43,34 @@ export const PERSONAS = {
     role: "it_admin" as Role,
     token: "Bearer token-it",
     highlights: ["All manager features", "SLA breach flags & service breakdown", "Re-assign logs & AI audit log"],
+    restricted: [],
+  },
+  quinn: {
+    name: "Quinn",
+    role: "qa_engineer" as Role,
+    token: "Bearer token-qa",
+    highlights: ["Sprint queue triage", "Add investigation notes", "Flag suspected duplicates"],
+    restricted: ["Approve duplicate merges", "Reassign defects across team", "Publish manager reports"],
+  },
+  riley: {
+    name: "Riley",
+    role: "qa_lead" as Role,
+    token: "Bearer token-qa-lead",
+    highlights: ["Run AI clustering", "Approve duplicate merge actions", "Assign and escalate defects"],
+    restricted: ["Portfolio-wide governance views"],
+  },
+  taylor: {
+    name: "Taylor",
+    role: "qa_engineer" as Role,
+    token: "Bearer token-qa-taylor",
+    highlights: ["Sprint queue triage", "Add investigation notes", "Flag suspected duplicates"],
+    restricted: ["Approve duplicate merges", "Reassign defects across team", "Publish manager reports"],
+  },
+  morgan: {
+    name: "Morgan",
+    role: "qa_manager" as Role,
+    token: "Bearer token-qa-manager",
+    highlights: ["Cross-sprint trend analysis", "Full QA triage controls", "CSV report export"],
     restricted: [],
   },
 };

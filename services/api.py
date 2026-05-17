@@ -5,9 +5,11 @@ Start with: uvicorn services.api:app --reload --port 8000
 import os
 import sqlite3
 import json
+import csv
+import io
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -31,6 +33,113 @@ def ensure_log_flag_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE logs ADD COLUMN flagged_reason TEXT")
     conn.commit()
 
+
+def ensure_qa_schema(conn: sqlite3.Connection) -> None:
+    """Backfill QA tables/columns for local DBs without migrations."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS defects (
+            defect_id INTEGER PRIMARY KEY,
+            sprint_id TEXT,
+            component TEXT,
+            severity TEXT,
+            status TEXT,
+            resolution_reason TEXT,
+            assignee TEXT,
+            reporter TEXT,
+            title TEXT,
+            description TEXT,
+            repro_steps TEXT,
+            expected_result TEXT,
+            actual_result TEXT,
+            customer_impact TEXT,
+            tags TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            canonical_defect_id INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sprints (
+            sprint_id TEXT PRIMARY KEY,
+            start_date TEXT,
+            end_date TEXT,
+            release_label TEXT,
+            modules_deployed TEXT,
+            deploy_success_count INTEGER DEFAULT 0,
+            deploy_error_count INTEGER DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS defect_triage_notes (
+            note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            defect_id INTEGER NOT NULL,
+            author TEXT NOT NULL,
+            note_body TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS defect_merge_actions (
+            merge_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_defect_id INTEGER NOT NULL,
+            canonical_defect_id INTEGER NOT NULL,
+            confidence_score REAL,
+            reason TEXT,
+            approved_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(defects)").fetchall()}
+    required = {
+        "sprint_id": "TEXT",
+        "status": "TEXT DEFAULT 'open'",
+        "resolution_reason": "TEXT",
+        "assignee": "TEXT",
+        "reporter": "TEXT",
+        "title": "TEXT",
+        "repro_steps": "TEXT",
+        "expected_result": "TEXT",
+        "actual_result": "TEXT",
+        "customer_impact": "TEXT",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
+        "canonical_defect_id": "INTEGER",
+    }
+    for col, col_type in required.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE defects ADD COLUMN {col} {col_type}")
+
+    existing_sprints = {row[1] for row in conn.execute("PRAGMA table_info(sprints)").fetchall()}
+    sprint_required = {
+        "modules_deployed": "TEXT",
+        "deploy_success_count": "INTEGER DEFAULT 0",
+        "deploy_error_count": "INTEGER DEFAULT 0",
+    }
+    for col, col_type in sprint_required.items():
+        if col not in existing_sprints:
+            conn.execute(f"ALTER TABLE sprints ADD COLUMN {col} {col_type}")
+
+    # Normalize old schema naming from legacy seed script.
+    if "sprint" in existing and "sprint_id" in required:
+        conn.execute(
+            "UPDATE defects SET sprint_id = COALESCE(sprint_id, sprint) WHERE sprint_id IS NULL"
+        )
+    if "engineer" in existing and "assignee" in required:
+        conn.execute(
+            "UPDATE defects SET assignee = COALESCE(assignee, engineer) WHERE assignee IS NULL"
+        )
+
+    conn.commit()
+
 # ---------------------------------------------------------------------------
 # Simple token auth simulation
 # ---------------------------------------------------------------------------
@@ -38,6 +147,9 @@ DEMO_TOKENS = {
     "token-agent": "support_agent",
     "token-manager": "support_manager",
     "token-qa": "qa_engineer",
+    "token-qa-taylor": "qa_engineer",
+    "token-qa-lead": "qa_lead",
+    "token-qa-manager": "qa_manager",
     "token-ops": "ops_engineer",
     "token-alice": "ops_engineer",
     "token-bob": "ops_engineer",
@@ -52,6 +164,10 @@ DEMO_ACTORS = {
     "token-carol": "carol",
     "token-manager": "dana",
     "token-it": "evan",
+    "token-qa": "quinn",
+    "token-qa-taylor": "taylor",
+    "token-qa-lead": "riley",
+    "token-qa-manager": "morgan",
 }
 
 
@@ -115,27 +231,495 @@ def ai_summarize(req: SummarizeRequest, role: str = Depends(get_role)):
 
 
 # ---------------------------------------------------------------------------
-# Defects
+# QA Defects
 # ---------------------------------------------------------------------------
-@app.get("/api/defects")
-def list_defects(role: str = Depends(get_role)):
+QA_ROLES = ("qa_engineer", "qa_lead", "qa_manager")
+QA_ANALYSIS_ROLES = ("qa_lead", "qa_manager")
+
+
+def _get_qa_actor(authorization: Optional[str], fallback_role: str) -> str:
+    token = (authorization or "").replace("Bearer ", "").strip()
+    return DEMO_ACTORS.get(token, fallback_role)
+
+
+def _parse_csv_param(raw: Optional[str]) -> list[str]:
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+@app.get("/api/qa/sprints")
+def list_qa_sprints(role: str = Depends(get_role)):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
     conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM defects").fetchall()
+    ensure_qa_schema(conn)
+
+    rows = conn.execute(
+        """
+        SELECT sprint_id, start_date, end_date, release_label, modules_deployed, deploy_success_count, deploy_error_count
+        FROM sprints
+        ORDER BY sprint_id DESC
+        """
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-class ClusterRequest(BaseModel):
-    descriptions: list[str]
+@app.get("/api/qa/defects")
+def list_qa_defects(
+    sprints: Optional[str] = None,
+    severity: Optional[str] = None,
+    component: Optional[str] = None,
+    status: Optional[str] = None,
+    assignee: Optional[str] = None,
+    role: str = Depends(get_role),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    sprint_filters = _parse_csv_param(sprints)
+    query = "SELECT * FROM defects WHERE 1=1"
+    params: list[str] = []
+
+    if sprint_filters:
+        placeholders = ",".join(["?"] * len(sprint_filters))
+        query += f" AND sprint_id IN ({placeholders})"
+        params.extend(sprint_filters)
+    if severity:
+        query += " AND severity = ?"
+        params.append(severity)
+    if component:
+        query += " AND component = ?"
+        params.append(component)
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if assignee:
+        query += " AND assignee = ?"
+        params.append(assignee)
+
+    query += " ORDER BY created_at DESC, defect_id DESC"
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
-@app.post("/api/ai/cluster-defects")
-def ai_cluster(req: ClusterRequest, role: str = Depends(get_role)):
-    if role not in ("qa_engineer", "support_manager"):
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
+@app.get("/api/qa/trends/heatmap")
+def get_qa_heatmap(
+    sprints: Optional[str] = None,
+    role: str = Depends(get_role),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    sprint_filters = _parse_csv_param(sprints)
+    query = (
+        "SELECT sprint_id, component, severity, COUNT(*) as defect_count "
+        "FROM defects WHERE 1=1"
+    )
+    params: list[str] = []
+    if sprint_filters:
+        placeholders = ",".join(["?"] * len(sprint_filters))
+        query += f" AND sprint_id IN ({placeholders})"
+        params.extend(sprint_filters)
+    query += " GROUP BY sprint_id, component, severity ORDER BY sprint_id DESC"
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+class QANoteRequest(BaseModel):
+    note_body: str
+
+
+@app.get("/api/qa/defects/{defect_id}/notes")
+def list_qa_notes(
+    defect_id: int,
+    role: str = Depends(get_role),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    exists = conn.execute("SELECT defect_id FROM defects WHERE defect_id = ?", (defect_id,)).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Defect not found")
+
+    rows = conn.execute(
+        """
+        SELECT note_id, defect_id, author, note_body, created_at
+        FROM defect_triage_notes
+        WHERE defect_id = ?
+        ORDER BY created_at DESC, note_id DESC
+        """,
+        (defect_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/qa/defects/{defect_id}/notes")
+def add_qa_note(
+    defect_id: int,
+    req: QANoteRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    note_body = req.note_body.strip()
+    if not note_body:
+        raise HTTPException(status_code=400, detail="Note body cannot be empty")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    exists = conn.execute("SELECT defect_id FROM defects WHERE defect_id = ?", (defect_id,)).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Defect not found")
+
+    actor = _get_qa_actor(authorization, role)
+    created_at = datetime.utcnow().isoformat() + "Z"
+    conn.execute(
+        "INSERT INTO defect_triage_notes (defect_id, author, note_body, created_at) VALUES (?, ?, ?, ?)",
+        (defect_id, actor, note_body, created_at),
+    )
+    conn.commit()
+
+    from services.audit_logger import log_action
+    log_action(actor=actor, action="qa_note_added", entity_id=defect_id, metadata={"length": len(note_body)})
+
+    note = conn.execute(
+        "SELECT * FROM defect_triage_notes WHERE note_id = last_insert_rowid()"
+    ).fetchone()
+    conn.close()
+    return {"success": True, "note": dict(note) if note else None}
+
+
+class QAStatusRequest(BaseModel):
+    status: str
+    resolution_reason: Optional[str] = None
+
+
+@app.patch("/api/qa/defects/{defect_id}/status")
+def update_qa_status(
+    defect_id: int,
+    req: QAStatusRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    allowed_statuses = {
+        "open",
+        "investigating",
+        "escalated",
+        "resolved",
+        "duplicate_pending",
+        "duplicate_merged",
+    }
+    if req.status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    if req.status == "duplicate_merged" and role not in ("qa_lead", "qa_manager"):
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can mark duplicate merged")
+    if req.status == "resolved" and not req.resolution_reason:
+        raise HTTPException(status_code=400, detail="Resolution reason is required when resolving")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    current = conn.execute("SELECT defect_id, assignee FROM defects WHERE defect_id = ?", (defect_id,)).fetchone()
+    if not current:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Defect not found")
+
+    actor = _get_qa_actor(authorization, role)
+    current_assignee = (current["assignee"] or "").strip().lower()
+    if role == "qa_engineer" and current_assignee and current_assignee != actor:
+        conn.close()
+        raise HTTPException(status_code=403, detail="QA engineer can only update unassigned or self-assigned defects")
+
+    conn.execute(
+        """
+        UPDATE defects
+        SET status = ?, resolution_reason = ?, updated_at = ?
+        WHERE defect_id = ?
+        """,
+        (
+            req.status,
+            req.resolution_reason if req.status == "resolved" else None,
+            datetime.utcnow().isoformat() + "Z",
+            defect_id,
+        ),
+    )
+    conn.commit()
+
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor,
+        action="qa_status_updated",
+        entity_id=defect_id,
+        metadata={"status": req.status, "resolution_reason": req.resolution_reason},
+    )
+
+    row = conn.execute("SELECT * FROM defects WHERE defect_id = ?", (defect_id,)).fetchone()
+    conn.close()
+    return {"success": True, "defect": dict(row) if row else None}
+
+
+class QAAssignRequest(BaseModel):
+    assignee: Optional[str]
+
+
+@app.patch("/api/qa/defects/{defect_id}/assign")
+def assign_qa_defect(
+    defect_id: int,
+    req: QAAssignRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in ("qa_lead", "qa_manager"):
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can reassign defects")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    current = conn.execute("SELECT defect_id FROM defects WHERE defect_id = ?", (defect_id,)).fetchone()
+    if not current:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Defect not found")
+
+    conn.execute(
+        "UPDATE defects SET assignee = ?, updated_at = ? WHERE defect_id = ?",
+        (req.assignee, datetime.utcnow().isoformat() + "Z", defect_id),
+    )
+    conn.commit()
+
+    actor = _get_qa_actor(authorization, role)
+    from services.audit_logger import log_action
+    log_action(actor=actor, action="qa_defect_assigned", entity_id=defect_id, metadata={"assignee": req.assignee})
+
+    row = conn.execute("SELECT * FROM defects WHERE defect_id = ?", (defect_id,)).fetchone()
+    conn.close()
+    return {"success": True, "defect": dict(row) if row else None}
+
+
+class QAClusterRequest(BaseModel):
+    sprints: list[str] = []
+
+
+@app.post("/api/qa/analysis/cluster")
+def run_qa_cluster(
+    req: QAClusterRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in QA_ANALYSIS_ROLES:
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can run clustering")
+
+    sprint_filters = [s.strip() for s in req.sprints if s.strip()]
+    query = "SELECT defect_id, description FROM defects WHERE 1=1"
+    params: list[str] = []
+    if sprint_filters:
+        placeholders = ",".join(["?"] * len(sprint_filters))
+        query += f" AND sprint_id IN ({placeholders})"
+        params.extend(sprint_filters)
+    query += " ORDER BY created_at DESC"
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+
+    descriptions = [r["description"] for r in rows]
     from services.ai_client import cluster_defects
-    return cluster_defects(req.descriptions)
+    clusters = cluster_defects(descriptions)
+
+    actor = _get_qa_actor(authorization, role)
+    from services.audit_logger import log_action
+    log_action(actor=actor, action="qa_cluster_run", entity_id="qa", metadata={"input_count": len(descriptions)})
+
+    return {"clusters": clusters, "input_count": len(descriptions)}
+
+
+class QADuplicateRequest(BaseModel):
+    sprints: list[str] = []
+
+
+@app.post("/api/qa/analysis/duplicates")
+def run_qa_duplicate_detection(
+    req: QADuplicateRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in QA_ANALYSIS_ROLES:
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can run duplicate detection")
+
+    sprint_filters = [s.strip() for s in req.sprints if s.strip()]
+    query = "SELECT defect_id, description, component FROM defects WHERE 1=1"
+    params: list[str] = []
+    if sprint_filters:
+        placeholders = ",".join(["?"] * len(sprint_filters))
+        query += f" AND sprint_id IN ({placeholders})"
+        params.extend(sprint_filters)
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+
+    records = [
+        {
+            "defect_id": r["defect_id"],
+            "description": r["description"],
+            "component": r["component"],
+        }
+        for r in rows
+    ]
+    from services.ai_client import find_duplicates
+    groups = find_duplicates(records)
+
+    def _tokenize(text: str) -> set[str]:
+        return {tok for tok in text.lower().replace("-", " ").replace("_", " ").split() if len(tok) > 3}
+
+    def _overlap(a: str, b: str) -> float:
+        a_tokens = _tokenize(a)
+        b_tokens = _tokenize(b)
+        if not a_tokens or not b_tokens:
+            return 0.0
+        return len(a_tokens & b_tokens) / max(1, len(a_tokens | b_tokens))
+
+    enriched_groups = []
+    for group in groups:
+        if len(group) < 2:
+            continue
+
+        pair_scores = []
+        for idx in range(len(group)):
+            for jdx in range(idx + 1, len(group)):
+                pair_scores.append(_overlap(group[idx]["description"], group[jdx]["description"]))
+
+        avg_score = sum(pair_scores) / len(pair_scores) if pair_scores else 0.0
+        confidence = round(min(0.99, max(0.52, avg_score + 0.22)), 2)
+
+        components = [item.get("component") for item in group if item.get("component")]
+        top_component = max(set(components), key=components.count) if components else None
+
+        shared_keywords = set(_tokenize(group[0]["description"]))
+        for item in group[1:]:
+            shared_keywords &= _tokenize(item["description"])
+        keywords_list = sorted(list(shared_keywords))[:3]
+
+        if top_component and keywords_list:
+            rationale = f"Repeated {top_component} issue signals; overlapping terms: {', '.join(keywords_list)}."
+        elif top_component:
+            rationale = f"Repeated {top_component} defect pattern with similar reproduction context."
+        else:
+            rationale = "Descriptions share substantial overlap in wording and symptom pattern."
+
+        enriched_groups.append(
+            {
+                "items": group,
+                "confidence": confidence,
+                "rationale": rationale,
+            }
+        )
+
+    actor = _get_qa_actor(authorization, role)
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor,
+        action="qa_duplicate_scan",
+        entity_id="qa",
+        metadata={"input_count": len(records), "groups": len(enriched_groups)},
+    )
+
+    return {"groups": enriched_groups, "input_count": len(records)}
+
+
+@app.get("/api/qa/reports/export.csv")
+def export_qa_report_csv(
+    sprints: Optional[str] = None,
+    severity: Optional[str] = None,
+    component: Optional[str] = None,
+    status: Optional[str] = None,
+    assignee: Optional[str] = None,
+    role: str = Depends(get_role),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    sprint_filters = _parse_csv_param(sprints)
+    query = "SELECT defect_id, sprint_id, component, severity, status, resolution_reason, assignee, title, created_at FROM defects WHERE 1=1"
+    params: list[str] = []
+    if sprint_filters:
+        placeholders = ",".join(["?"] * len(sprint_filters))
+        query += f" AND sprint_id IN ({placeholders})"
+        params.extend(sprint_filters)
+    if severity:
+        query += " AND severity = ?"
+        params.append(severity)
+    if component:
+        query += " AND component = ?"
+        params.append(component)
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if assignee:
+        query += " AND assignee = ?"
+        params.append(assignee)
+    query += " ORDER BY sprint_id DESC, defect_id DESC"
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["defect_id", "sprint_id", "component", "severity", "status", "resolution_reason", "assignee", "title", "created_at"])
+    for row in rows:
+        writer.writerow([
+            row["defect_id"],
+            row["sprint_id"],
+            row["component"],
+            row["severity"],
+            row["status"],
+            row["resolution_reason"],
+            row["assignee"],
+            row["title"],
+            row["created_at"],
+        ])
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=qa_defects_report.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------
