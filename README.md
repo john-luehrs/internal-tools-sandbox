@@ -2,7 +2,7 @@
 
 A fully self-contained, local-only environment for practicing real internal-tools engineering, AI-assisted workflows, secure data handling, and iterative development with spec updates.
 
-TThis sandbox simulates realistic business friction, internal APIs, synthetic datasets, and evolving requirements, reflecting the kinds of challenges handled by modern internal-tools, DevEx, and AI-ops teams.
+This sandbox simulates realistic business friction, internal APIs, synthetic datasets, and evolving requirements, reflecting the kinds of challenges handled by modern internal-tools, DevEx, and AI-ops teams.
 
 > Everything runs **locally**. No hosting. No real data.
 
