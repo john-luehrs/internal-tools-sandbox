@@ -12,13 +12,13 @@ This sandbox simulates realistic business friction, internal APIs, synthetic dat
 
 | # | Tool | Friction | Impact | Status |
 |---|------|----------|--------|--------|
-| 1 | [Support Ticket Triage Dashboard](app/support_dashboard/) | 6.2hr avg first response vs 2hr SLA target; agents spend 75% of ticket time searching 4 systems | First-response time target < 2hr; SLA breaches ↓ 18%; CSAT 3.6 → 4.2/5 | not started |
-| 2 | [QA Defect Pattern Analyzer](app/qa_analyzer/) | 10–12hr/sprint manual defect analysis; 22% of tickets are duplicates; 4–6hr/week lost to known-issue rework | Pattern analysis < 30min/sprint; duplicates caught before filing | complete (phase 1) |
-| 3 | [Onboarding Workflow Automation](app/onboarding/) | 14 untracked manual steps; 5–7 days to full access; 40% of hires arrive Day 1 without accounts | Same-day provisioning for standard roles; manager visibility dashboard | not started |
-| 4 | [AI-Assisted Log Analyzer](app/log_analyzer/) | 47min MTTD; 3 incidents/quarter missed for 2+ hrs; 35% of on-call shift spent on log review | MTTD target < 10min; anomaly scoring replaces manual scanning | complete |
-| 5 | [Internal Data Cleanup Tool](app/data_cleanup/) | ~12% duplicate customer records; $40K in billing errors/quarter; 6–8hr/month manual reconciliation | Reconciliation < 30min/month; duplicate and invoice errors eliminated | not started |
-| 6 | [Slack Productivity Bot](app/slack_bot/) | Runbooks split across 3 tools; 45min/week/engineer lost to doc search; 9 engineer-hrs/week team-wide | Doc search < 5min/week/engineer; deploy status and runbooks in one command | not started |
-| 7 | [GitHub Actions Automation](app/github_actions/) | 25–35min of manual steps per deploy cycle; 3 production incidents/quarter from skipped manual steps | Deploy cycle < 5min automated; failures notify Slack immediately | not started |
+| 1 | [Support Ticket Triage Dashboard](app/support_dashboard/) | 6.2hr avg first response vs 2hr SLA target; agents spend 75% of ticket time searching 4 systems | First-response time target < 2hr; SLA breaches ↓ 18%; CSAT 3.6 → 4.2/5 | Not Started |
+| 2 | [QA Defect Pattern Analyzer](app/qa_analyzer/) | 10–12hr/sprint manual defect analysis; 22% of tickets are duplicates; 4–6hr/week lost to known-issue rework | Pattern analysis < 30min/sprint; duplicates caught before filing | Testable |
+| 3 | [Onboarding Workflow Automation](app/onboarding/) | 14 untracked manual steps; 5–7 days to full access; 40% of hires arrive Day 1 without accounts | Same-day provisioning for standard roles; manager visibility dashboard | Not Started |
+| 4 | [AI-Assisted Log Analyzer](app/log_analyzer/) | 47min MTTD; 3 incidents/quarter missed for 2+ hrs; 35% of on-call shift spent on log review | MTTD target < 10min; anomaly scoring replaces manual scanning | Complete |
+| 5 | [Internal Data Cleanup Tool](app/data_cleanup/) | ~12% duplicate customer records; $40K in billing errors/quarter; 6–8hr/month manual reconciliation | Reconciliation < 30min/month; duplicate and invoice errors eliminated | Not Started |
+| 6 | [Slack Productivity Bot](app/slack_bot/) | Runbooks split across 3 tools; 45min/week/engineer lost to doc search; 9 engineer-hrs/week team-wide | Doc search < 5min/week/engineer; deploy status and runbooks in one command | Not Started |
+| 7 | [GitHub Actions Automation](app/github_actions/) | 25–35min of manual steps per deploy cycle; 3 production incidents/quarter from skipped manual steps | Deploy cycle < 5min automated; failures notify Slack immediately | Not Started |
 
 ---
 
