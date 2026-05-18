@@ -3,6 +3,7 @@ import {
   LogStats,
   ExplanationResponse,
   QASprint,
+  QAHeatmapPoint,
   QADefect,
   QANote,
   QAClusterResult,
@@ -188,6 +189,16 @@ export async function getQADefects(
 
   const query = params.toString();
   return apiFetch<QADefect[]>(`/qa/defects${query ? `?${query}` : ""}`, { token });
+}
+
+export async function getQAHeatmap(
+  sprints: string[] = [],
+  token?: string
+): Promise<QAHeatmapPoint[]> {
+  const params = new URLSearchParams();
+  if (sprints.length) params.append("sprints", sprints.join(","));
+  const query = params.toString();
+  return apiFetch<QAHeatmapPoint[]>(`/qa/trends/heatmap${query ? `?${query}` : ""}`, { token });
 }
 
 export async function addQADefectNote(

@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   addQADefectNote,
   assignQADefect,
+  getQAHeatmap,
   getQADefectNotes,
   getQADefects,
   getQASprints,
@@ -12,12 +13,13 @@ import {
   updateQADefectStatus,
   getQAReportExportUrl,
 } from "@/lib/api";
-import { QAClusterResult, QADefect, QADuplicateResult, QANote, QASprint } from "@/lib/types";
+import { QAClusterResult, QADefect, QADuplicateResult, QAHeatmapPoint, QANote, QASprint } from "@/lib/types";
 import { useRoleContext } from "@/lib/RoleContext";
 
 const QA_ROLES = new Set(["qa_engineer", "qa_lead", "qa_manager"]);
 const QA_ANALYSIS_ROLES = new Set(["qa_lead", "qa_manager"]);
 const QA_DEFAULT_ASSIGNEES = ["quinn", "riley", "taylor", "morgan"];
+const SEVERITY_ORDER: Array<"critical" | "high" | "medium" | "low"> = ["critical", "high", "medium", "low"];
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return "-";
@@ -62,8 +64,10 @@ export default function QASprintPage() {
   const { role, token } = useRoleContext();
   const [sprints, setSprints] = useState<QASprint[]>([]);
   const [defects, setDefects] = useState<QADefect[]>([]);
+  const [heatmapPoints, setHeatmapPoints] = useState<QAHeatmapPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [heatmapBridgeLabel, setHeatmapBridgeLabel] = useState("");
   const [selected, setSelected] = useState<QADefect | null>(null);
   const [noteText, setNoteText] = useState("");
   const [statusDraft, setStatusDraft] = useState("investigating");
@@ -121,12 +125,14 @@ export default function QASprintPage() {
     if (!isQaRole) return;
     try {
       setLoading(true);
-      const [sprintData, defectData] = await Promise.all([
+      const [sprintData, defectData, heatmapData] = await Promise.all([
         getQASprints(token),
         getQADefects(filters, token),
+        getQAHeatmap(filters.sprints, token),
       ]);
       setSprints(sprintData);
       setDefects(defectData);
+      setHeatmapPoints(heatmapData);
       if (selected) {
         const fresh = defectData.find((d) => d.defect_id === selected.defect_id) ?? null;
         setSelected(fresh);
@@ -159,7 +165,6 @@ export default function QASprintPage() {
     setSelectedDuplicateIndex(0);
     setAnalysisHasRun(false);
     setAnalysisError("");
-    setAnalysisMinimized(false);
   }, [analysisByFilter, analysisFilterKey]);
 
   const availableComponents = useMemo(() => {
@@ -187,6 +192,76 @@ export default function QASprintPage() {
     if (!duplicateResults.length) return null;
     return duplicateResults[selectedDuplicateIndex] ?? duplicateResults[0];
   }, [duplicateResults, selectedDuplicateIndex]);
+
+  const componentHeatmapRows = useMemo(() => {
+    const map = new Map<string, Record<string, number>>();
+
+    for (const point of heatmapPoints) {
+      if (!map.has(point.component)) {
+        map.set(point.component, {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+        });
+      }
+      const row = map.get(point.component);
+      if (row) row[point.severity] += point.defect_count;
+    }
+
+    return Array.from(map.entries())
+      .map(([component, counts]) => {
+        const total = SEVERITY_ORDER.reduce((sum, severity) => sum + counts[severity], 0);
+        return { component, counts, total };
+      })
+      .sort((a, b) => b.total - a.total || a.component.localeCompare(b.component));
+  }, [heatmapPoints]);
+
+  const severityDistribution = useMemo(() => {
+    const totals: Record<string, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    };
+
+    for (const point of heatmapPoints) {
+      totals[point.severity] += point.defect_count;
+    }
+
+    return SEVERITY_ORDER.map((severity) => ({ severity, count: totals[severity] }));
+  }, [heatmapPoints]);
+
+  const maxSeverityCount = useMemo(
+    () => severityDistribution.reduce((max, current) => Math.max(max, current.count), 0),
+    [severityDistribution]
+  );
+
+  const maxPerSeverity = useMemo(() => {
+    const m: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const row of componentHeatmapRows) {
+      for (const s of SEVERITY_ORDER) m[s] = Math.max(m[s], row.counts[s]);
+    }
+    return m;
+  }, [componentHeatmapRows]);
+
+  const applyHeatmapFilters = (component?: string, severity?: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      component: component ?? prev.component,
+      severity: severity ?? prev.severity,
+    }));
+
+    const parts = [];
+    if (component) parts.push(`component: ${component}`);
+    if (severity) parts.push(`severity: ${formatDisplayLabel(severity)}`);
+    setHeatmapBridgeLabel(parts.join(" | "));
+  };
+
+  const clearHeatmapBridge = () => {
+    setFilters((prev) => ({ ...prev, component: "", severity: "" }));
+    setHeatmapBridgeLabel("");
+  };
 
   const exportCsv = async () => {
     try {
@@ -418,96 +493,275 @@ export default function QASprintPage() {
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", alignItems: "stretch" }}>
+        <div className="card" style={{ minHeight: 280, height: "100%" }}>
+          <div className="card-header">
+            <h2 className="card-title">QA Defect Pattern Analyzer</h2>
+          </div>
+
+          <div className="filters">
+            <div className="filter-group" style={{ minWidth: 160 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <label className="filter-label">Sprints</label>
+                {filters.sprints.length > 0 && (
+                  <button
+                    onClick={() => setFilters((prev) => ({ ...prev, sprints: [] }))}
+                    style={{ fontSize: 11, padding: "1px 6px", cursor: "pointer", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--muted)", lineHeight: 1.4 }}
+                    title="Clear sprint selection (show all sprints)"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <select
+                multiple
+                className="filter-select"
+                value={filters.sprints}
+                onChange={(e) => {
+                  const selectedValues = Array.from(e.target.selectedOptions).map((opt) => opt.value);
+                  setFilters((prev) => ({ ...prev, sprints: selectedValues }));
+                }}
+                style={{ minHeight: 92 }}
+              >
+                {sprints.map((s) => (
+                  <option key={s.sprint_id} value={s.sprint_id}>
+                    {s.sprint_id} ({s.release_label})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label className="filter-label">Severity</label>
+              <select className="filter-select" value={filters.severity} onChange={(e) => setFilters((p) => ({ ...p, severity: e.target.value }))}>
+                <option value="">All</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label className="filter-label">Component</label>
+              <select className="filter-select" value={filters.component} onChange={(e) => setFilters((p) => ({ ...p, component: e.target.value }))}>
+                <option value="">All</option>
+                {availableComponents.map((component) => (
+                  <option key={component} value={component}>
+                    {component}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label className="filter-label">Status</label>
+              <select className="filter-select" value={filters.status} onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}>
+                <option value="">All</option>
+                <option value="open">Open</option>
+                <option value="investigating">Investigating</option>
+                <option value="escalated">Escalated</option>
+                <option value="resolved">Resolved</option>
+                <option value="duplicate_pending">Duplicate Pending</option>
+                <option value="duplicate_merged">Duplicate Merged</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label className="filter-label">Assignee</label>
+              <select className="filter-select" value={filters.assignee} onChange={(e) => setFilters((p) => ({ ...p, assignee: e.target.value }))}>
+                <option value="">All</option>
+                {availableAssignees.map((assignee) => (
+                  <option key={assignee} value={assignee}>
+                    {formatDisplayLabel(assignee)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <section className="card" style={{ padding: 14, minHeight: 280, height: "100%" }}>
+          <h3 className="card-title" style={{ marginTop: 0, marginBottom: 4 }}>Component Heatmap</h3>
+          <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 12 }}>
+            Click a cell to filter by component + severity, or a label to filter by component only.
+          </p>
+          {componentHeatmapRows.length ? (
+            <div style={{ display: "grid", gridTemplateColumns: "max-content repeat(4, 44px)", gap: "4px 6px", width: "fit-content" }}>
+              <span />
+              {(["critical", "high", "medium", "low"] as const).map((s) => (
+                <span key={s} style={{ fontSize: 11, textAlign: "center", color: "var(--muted)", textTransform: "capitalize", paddingBottom: 4 }}>
+                  {s}
+                </span>
+              ))}
+              {componentHeatmapRows.map((row) => (
+                <React.Fragment key={row.component}>
+                  <button
+                    type="button"
+                    onClick={() => applyHeatmapFilters(row.component, "")}
+                    title={`Filter by ${row.component} (${row.total} total)`}
+                    style={{ background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {row.component}
+                  </button>
+                  {(["critical", "high", "medium", "low"] as const).map((s) => {
+                    const count = row.counts[s];
+                    const max = maxPerSeverity[s];
+                    const intensity = max > 0 ? 0.12 + 0.88 * (count / max) : 0;
+                    const color = s === "critical" ? `rgba(220,38,38,${intensity})` : s === "high" ? `rgba(234,88,12,${intensity})` : s === "medium" ? `rgba(202,138,4,${intensity})` : `rgba(22,163,74,${intensity})`;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => count > 0 ? applyHeatmapFilters(row.component, s) : undefined}
+                        title={count > 0 ? `${row.component} / ${s}: ${count} defects` : undefined}
+                        style={{
+                          background: count > 0 ? color : "rgba(148,163,184,0.06)",
+                          border: "1px solid rgba(148,163,184,0.12)",
+                          borderRadius: 4,
+                          height: 26,
+                          cursor: count > 0 ? "pointer" : "default",
+                          fontSize: 12,
+                          fontWeight: count > 0 ? 600 : 400,
+                          color: count > 0 ? "var(--text)" : "transparent",
+                        }}
+                      >
+                        {count > 0 ? count : ""}
+                      </button>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
+            </div>
+          ) : (
+            <p style={{ margin: 0, color: "var(--muted)" }}>No heatmap data for the current sprint selection.</p>
+          )}
+        </section>
+
+        <section className="card" style={{ padding: 14, minHeight: 180, height: "100%" }}>
+          {selectedSprintMeta ? (
+            <div style={{ display: "grid", gap: 12, height: "100%" }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <h3 className="card-title" style={{ marginTop: 0, marginBottom: 4 }}>
+                    Sprint {selectedSprintMeta.sprint_id}
+                  </h3>
+                  <p style={{ margin: 0, color: "var(--muted)", fontSize: 12 }}>
+                    {selectedSprintMeta.release_label}
+                  </p>
+                </div>
+                <div style={{ padding: "4px 8px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--muted)", fontSize: 11, whiteSpace: "nowrap" }}>
+                  Active sprint
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Release</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{selectedSprintMeta.release_label}</div>
+                </div>
+
+                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Date range</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>{selectedSprintMeta.start_date} → {selectedSprintMeta.end_date}</div>
+                </div>
+
+                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Deployment health</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{selectedSprintMeta.deploy_success_count ?? 0}</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>ok</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>/</span>
+                    <span style={{ fontSize: 13, color: "var(--muted)" }}>{selectedSprintMeta.deploy_error_count ?? 0} errors</span>
+                  </div>
+                </div>
+
+                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Modules</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1 }}>
+                    {(selectedSprintMeta.modules_deployed || "not specified")
+                      .split(",")
+                      .map((moduleName) => moduleName.trim())
+                      .filter(Boolean).length}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>deployed</div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <span style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.6 }}>Modules deployed</span>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>{selectedSprintMeta.modules_deployed ? "Listed below" : "Not specified"}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {(selectedSprintMeta.modules_deployed || "not specified").split(",").map((moduleName) => (
+                    <span
+                      key={moduleName.trim()}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "3px 8px",
+                        borderRadius: 999,
+                        background: "rgba(148, 163, 184, 0.10)",
+                        border: "1px solid rgba(148, 163, 184, 0.14)",
+                        color: "var(--text)",
+                        fontSize: 11,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {moduleName.trim()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", placeItems: "center", height: "100%", minHeight: 120, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
+              Select a sprint to see its deployment summary.
+            </div>
+          )}
+        </section>
+
+        <section className="card" style={{ padding: 14, minHeight: 180, height: "100%" }}>
+          <h3 className="card-title" style={{ marginTop: 0, marginBottom: 4 }}>Severity Distribution</h3>
+          <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 12 }}>Click a label to filter by severity.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {severityDistribution.map((item) => {
+              const dotColor = item.severity === "critical" ? "#dc2626" : item.severity === "high" ? "#ea580c" : item.severity === "medium" ? "#ca8a04" : "#16a34a";
+              const pct = maxSeverityCount > 0 ? Math.max(0, (item.count / maxSeverityCount) * 100) : 0;
+              return (
+                <button
+                  key={item.severity}
+                  type="button"
+                  onClick={() => applyHeatmapFilters("", item.severity)}
+                  title={`Filter defects by ${item.severity} severity`}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", color: "var(--text)" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, textTransform: "capitalize" }}>{item.severity}</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)", marginLeft: "auto" }}>{item.count}</span>
+                  </div>
+                  <div style={{ background: "rgba(148,163,184,0.15)", borderRadius: 6, overflow: "hidden", height: 6 }}>
+                    <div style={{ width: `${pct}%`, height: "100%", background: dotColor, borderRadius: 6, transition: "width 0.3s" }} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+
+      {/* ── Main content card: actions + defect table ── */}
       <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">QA Defect Pattern Analyzer</h2>
-        </div>
 
-        <div className="filters">
-          <div className="filter-group" style={{ minWidth: 200 }}>
-            <label className="filter-label">Sprints</label>
-            <select
-              multiple
-              className="filter-select"
-              value={filters.sprints}
-              onChange={(e) => {
-                const selectedValues = Array.from(e.target.selectedOptions).map((opt) => opt.value);
-                setFilters((prev) => ({ ...prev, sprints: selectedValues }));
-              }}
-              style={{ minHeight: 92 }}
-            >
-              {sprints.map((s) => (
-                <option key={s.sprint_id} value={s.sprint_id}>
-                  {s.sprint_id} ({s.release_label})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label className="filter-label">Severity</label>
-            <select className="filter-select" value={filters.severity} onChange={(e) => setFilters((p) => ({ ...p, severity: e.target.value }))}>
-              <option value="">All</option>
-              <option value="critical">Critical</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label className="filter-label">Component</label>
-            <select className="filter-select" value={filters.component} onChange={(e) => setFilters((p) => ({ ...p, component: e.target.value }))}>
-              <option value="">All</option>
-              {availableComponents.map((component) => (
-                <option key={component} value={component}>
-                  {component}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label className="filter-label">Status</label>
-            <select className="filter-select" value={filters.status} onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}>
-              <option value="">All</option>
-              <option value="open">Open</option>
-              <option value="investigating">Investigating</option>
-              <option value="escalated">Escalated</option>
-              <option value="resolved">Resolved</option>
-              <option value="duplicate_pending">Duplicate Pending</option>
-              <option value="duplicate_merged">Duplicate Merged</option>
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label className="filter-label">Assignee</label>
-            <select className="filter-select" value={filters.assignee} onChange={(e) => setFilters((p) => ({ ...p, assignee: e.target.value }))}>
-              <option value="">All</option>
-              {availableAssignees.map((assignee) => (
-                <option key={assignee} value={assignee}>
-                  {formatDisplayLabel(assignee)}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {selectedSprintMeta ? (
-          <div className="card" style={{ marginBottom: 12, padding: 14 }}>
-            <p style={{ margin: 0, fontWeight: 700 }}>
-              Sprint {selectedSprintMeta.sprint_id} ({selectedSprintMeta.release_label})
+        {heatmapBridgeLabel ? (
+          <div className="card" style={{ marginBottom: 12, padding: 12 }}>
+            <p style={{ margin: "0 0 8px 0" }}>
+              Applied from heatmap: <strong>{heatmapBridgeLabel}</strong>
             </p>
-            <p style={{ margin: "4px 0", color: "var(--muted)" }}>
-              Date range: {selectedSprintMeta.start_date} to {selectedSprintMeta.end_date}
-            </p>
-            <p style={{ margin: "4px 0", color: "var(--muted)" }}>
-              Modules deployed: {selectedSprintMeta.modules_deployed || "not specified"}
-            </p>
-            <p style={{ margin: "4px 0", color: "var(--muted)" }}>
-              Deployment health: {selectedSprintMeta.deploy_success_count ?? 0} successful, {selectedSprintMeta.deploy_error_count ?? 0} errors
-            </p>
+            <button type="button" className="button button-small" onClick={clearHeatmapBridge}>Clear Heatmap Filter</button>
           </div>
         ) : null}
 

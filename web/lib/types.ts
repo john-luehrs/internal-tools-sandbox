@@ -37,6 +37,13 @@ export interface QASprint {
   deploy_error_count?: number;
 }
 
+export interface QAHeatmapPoint {
+  sprint_id: string;
+  component: string;
+  severity: "critical" | "high" | "medium" | "low";
+  defect_count: number;
+}
+
 export interface QADefect {
   defect_id: number;
   sprint_id: string;
