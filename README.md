@@ -88,6 +88,12 @@ Open one of the active dashboards:
 
 Tools 1, 3, 5, 6, and 7 are not part of the current web platform release.
 
+## Agent Workflow Governance
+
+For by-the-book agent-assisted development workflow (branching, PR gates, validation, docs/changelog discipline, and review protocol), see:
+
+- `docs/agent-constitution.md`
+
 ### 4. Active vs legacy UI paths
 
 - Active release path: Next.js + FastAPI for Tool 2 and Tool 4 (`web/` + `services/api.py`)
