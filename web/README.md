@@ -2,6 +2,12 @@
 
 Current release provides a shared Next.js + React frontend for Tool 4 (Log Analyzer) and Tool 2 (QA Defect Pattern Analyzer), backed by FastAPI on `localhost:8000`.
 
+## Scope Clarification
+
+- This `web/` app is the active release surface for Tool 2 and Tool 4.
+- Streamlit-based UIs in `app/` are legacy/prototype modules and are not required for this web workflow.
+- Running this frontend only requires FastAPI + Next.js as shown below.
+
 ## Quick Evaluator Notes
 
 - This repo demonstrates role-aware incident triage UX, not just static dashboard visuals.

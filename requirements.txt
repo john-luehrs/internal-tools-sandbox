@@ -1,4 +1,5 @@
 # Core framework
+# Streamlit supports legacy/prototype module UIs under app/; active Tool 2/4 web release uses Next.js + FastAPI.
 streamlit>=1.35.0
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0

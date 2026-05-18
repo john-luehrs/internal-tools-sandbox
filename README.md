@@ -2,7 +2,7 @@
 
 A fully self-contained, local-only environment for practicing real internal-tools engineering, AI-assisted workflows, secure data handling, and iterative development with spec updates.
 
-This sandbox simulates realistic business friction, internal APIs, synthetic datasets, and evolving requirements — mirroring the work done by internal-tools, DevEx, and AI-ops teams at companies like Datadog, HubSpot, Mark43, M-Files, and ServiceNow.
+This sandbox simulates realistic business friction, internal APIs, synthetic datasets, and evolving requirements, mirroring real-world workflows across internal-tools, DevEx, and AI-ops teams.
 
 > Everything runs **locally**. No hosting. No real data.
 
@@ -87,6 +87,12 @@ Open one of the active dashboards:
 - http://localhost:3000/qa-analyzer/sprint
 
 Tools 1, 3, 5, 6, and 7 are not part of the current web platform release.
+
+### 4. Active vs legacy UI paths
+
+- Active release path: Next.js + FastAPI for Tool 2 and Tool 4 (`web/` + `services/api.py`)
+- Legacy/prototype path: Python module UIs under `app/` (some use Streamlit)
+- Streamlit is not required to run the active Tool 2/Tool 4 web experience
 
 If you want a command reminder for a project, run `py scripts/run_tool.py <tool_name>`.
 
