@@ -8,6 +8,8 @@ import {
   QANote,
   QAClusterResult,
   QADuplicateResult,
+  QADuplicateMergeResult,
+  QADuplicateMergeRequestItem,
 } from "./types";
 
 const API_BASE = "/api";
@@ -261,12 +263,90 @@ export async function runQACluster(
 
 export async function runQADuplicateDetection(
   sprints: string[],
+  options?: { forceRefresh?: boolean },
   token?: string
 ): Promise<QADuplicateResult> {
   return apiFetch<QADuplicateResult>("/qa/analysis/duplicates", {
     token,
     method: "POST",
-    body: { sprints },
+    body: {
+      sprints,
+      force_refresh: options?.forceRefresh ?? false,
+    },
+  });
+}
+
+export async function mergeQADuplicates(
+  canonicalDefectId: number,
+  sourceDefectIds: number[],
+  confidenceScore?: number,
+  reason?: string,
+  token?: string
+): Promise<QADuplicateMergeResult> {
+  return apiFetch<QADuplicateMergeResult>("/qa/analysis/duplicates/merge", {
+    token,
+    method: "POST",
+    body: {
+      canonical_defect_id: canonicalDefectId,
+      source_defect_ids: sourceDefectIds,
+      confidence_score: confidenceScore,
+      reason,
+    },
+  });
+}
+
+export async function createQADuplicateMergeRequest(
+  canonicalDefectId: number,
+  sourceDefectIds: number[],
+  confidenceScore?: number,
+  reason?: string,
+  token?: string
+): Promise<{ success: boolean; request: QADuplicateMergeRequestItem | null }> {
+  return apiFetch<{ success: boolean; request: QADuplicateMergeRequestItem | null }>("/qa/analysis/duplicates/requests", {
+    token,
+    method: "POST",
+    body: {
+      canonical_defect_id: canonicalDefectId,
+      source_defect_ids: sourceDefectIds,
+      confidence_score: confidenceScore,
+      reason,
+    },
+  });
+}
+
+export async function listQADuplicateMergeRequests(
+  status: "pending" | "approved" | "rejected" | "all" = "pending",
+  token?: string
+): Promise<QADuplicateMergeRequestItem[]> {
+  const params = new URLSearchParams();
+  params.append("status", status);
+  return apiFetch<QADuplicateMergeRequestItem[]>(`/qa/analysis/duplicates/requests?${params.toString()}`, { token });
+}
+
+export async function approveQADuplicateMergeRequest(
+  requestId: number,
+  token?: string
+): Promise<{ success: boolean; request_id: number; merge: QADuplicateMergeResult }> {
+  return apiFetch<{ success: boolean; request_id: number; merge: QADuplicateMergeResult }>(
+    `/qa/analysis/duplicates/requests/${requestId}/approve`,
+    {
+      token,
+      method: "POST",
+    }
+  );
+}
+
+export async function rejectQADuplicateMergeRequest(
+  requestId: number,
+  reason?: string,
+  token?: string
+): Promise<{ success: boolean; request_id: number }> {
+  return apiFetch<{ success: boolean; request_id: number }>(`/qa/analysis/duplicates/requests/${requestId}/reject`, {
+    token,
+    method: "POST",
+    body: {
+      reason,
+    },
   });
 }
 

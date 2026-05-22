@@ -85,4 +85,40 @@ export interface QADuplicateResult {
     rationale: string;
   }>;
   input_count: number;
+  cached?: boolean;
+}
+
+export interface QADuplicateMergeResult {
+  success: boolean;
+  canonical_defect_id: number;
+  merged_defect_ids: number[];
+  merged_count: number;
+}
+
+export interface QADuplicateMergeRequestDefectSummary {
+  defect_id: number;
+  sprint_id: string;
+  component: string;
+  severity: "critical" | "high" | "medium" | "low";
+  status: "open" | "investigating" | "escalated" | "resolved" | "duplicate_pending" | "duplicate_merged";
+  assignee: string | null;
+  reporter: string | null;
+  title: string;
+  updated_at: string;
+}
+
+export interface QADuplicateMergeRequestItem {
+  request_id: number;
+  canonical_defect_id: number;
+  source_defect_ids: number[];
+  confidence_score: number | null;
+  reason: string | null;
+  requested_by: string;
+  status: "pending" | "approved" | "rejected";
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  canonical_defect: QADuplicateMergeRequestDefectSummary | null;
+  source_defects: QADuplicateMergeRequestDefectSummary[];
 }

@@ -4,20 +4,33 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   addQADefectNote,
   assignQADefect,
+  approveQADuplicateMergeRequest,
+  createQADuplicateMergeRequest,
   getQAHeatmap,
   getQADefectNotes,
   getQADefects,
+  listQADuplicateMergeRequests,
   getQASprints,
   runQACluster,
   runQADuplicateDetection,
+  rejectQADuplicateMergeRequest,
   updateQADefectStatus,
   getQAReportExportUrl,
 } from "@/lib/api";
-import { QAClusterResult, QADefect, QADuplicateResult, QAHeatmapPoint, QANote, QASprint } from "@/lib/types";
+import {
+  QAClusterResult,
+  QADefect,
+  QADuplicateMergeRequestItem,
+  QADuplicateResult,
+  QAHeatmapPoint,
+  QANote,
+  QASprint,
+} from "@/lib/types";
 import { useRoleContext } from "@/lib/RoleContext";
 
 const QA_ROLES = new Set(["qa_engineer", "qa_lead", "qa_manager"]);
 const QA_ANALYSIS_ROLES = new Set(["qa_lead", "qa_manager"]);
+const QA_MERGE_REVIEW_ROLES = new Set(["qa_lead", "qa_manager"]);
 const QA_DEFAULT_ASSIGNEES = ["quinn", "riley", "taylor", "morgan"];
 const SEVERITY_ORDER: Array<"critical" | "high" | "medium" | "low"> = ["critical", "high", "medium", "low"];
 
@@ -60,6 +73,24 @@ function normalizeDisplayText(value: string | null | undefined): string {
   return normalized || "-";
 }
 
+function getErrorText(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return fallback;
+}
+
+function getSeverityBadgeStyle(severity: "critical" | "high" | "medium" | "low") {
+  if (severity === "critical") {
+    return { background: "rgba(220,38,38,0.16)", border: "1px solid rgba(248,113,113,0.35)", color: "#fecaca" };
+  }
+  if (severity === "high") {
+    return { background: "rgba(234,88,12,0.16)", border: "1px solid rgba(251,146,60,0.35)", color: "#fdba74" };
+  }
+  if (severity === "medium") {
+    return { background: "rgba(202,138,4,0.16)", border: "1px solid rgba(250,204,21,0.35)", color: "#fde68a" };
+  }
+  return { background: "rgba(22,163,74,0.16)", border: "1px solid rgba(74,222,128,0.35)", color: "#bbf7d0" };
+}
+
 export default function QASprintPage() {
   const { role, token } = useRoleContext();
   const [sprints, setSprints] = useState<QASprint[]>([]);
@@ -81,9 +112,14 @@ export default function QASprintPage() {
   const [clusterResults, setClusterResults] = useState<QAClusterResult["clusters"]>([]);
   const [duplicateResults, setDuplicateResults] = useState<QADuplicateResult["groups"]>([]);
   const [selectedDuplicateIndex, setSelectedDuplicateIndex] = useState<number>(0);
+  const [duplicateCanonicalByIndex, setDuplicateCanonicalByIndex] = useState<Record<number, number>>({});
+  const [duplicateFocusDefectIds, setDuplicateFocusDefectIds] = useState<number[] | null>(null);
   const [analysisHasRun, setAnalysisHasRun] = useState(false);
   const [analysisMinimized, setAnalysisMinimized] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  const [mergeRequests, setMergeRequests] = useState<QADuplicateMergeRequestItem[]>([]);
+  const [leadQueueError, setLeadQueueError] = useState("");
+  const [leadQueueOpen, setLeadQueueOpen] = useState(false);
   const [analysisByFilter, setAnalysisByFilter] = useState<
     Record<
       string,
@@ -107,7 +143,9 @@ export default function QASprintPage() {
 
   const isQaRole = QA_ROLES.has(role);
   const canRunAnalysis = QA_ANALYSIS_ROLES.has(role);
-  const canApproveDuplicateMerge = role === "qa_lead" || role === "qa_manager";
+  const canRunDuplicateDetection = isQaRole;
+  const canSubmitDuplicateMergeRequest = isQaRole;
+  const canApproveDuplicateMergeRequest = QA_MERGE_REVIEW_ROLES.has(role);
 
   const analysisFilterKey = useMemo(
     () =>
@@ -167,6 +205,47 @@ export default function QASprintPage() {
     setAnalysisError("");
   }, [analysisByFilter, analysisFilterKey]);
 
+  useEffect(() => {
+    setDuplicateCanonicalByIndex((prev) => {
+      const next: Record<number, number> = { ...prev };
+      duplicateResults.forEach((group, idx) => {
+        const exists = next[idx] && group.items.some((item) => item.defect_id === next[idx]);
+        if (!exists && group.items.length) next[idx] = group.items[0].defect_id;
+      });
+      Object.keys(next).forEach((key) => {
+        if (Number(key) >= duplicateResults.length) delete next[Number(key)];
+      });
+      return next;
+    });
+  }, [duplicateResults]);
+
+  const loadMergeRequests = async () => {
+    if (!canApproveDuplicateMergeRequest) {
+      setMergeRequests([]);
+      setLeadQueueError("");
+      return;
+    }
+    try {
+      const requests = await listQADuplicateMergeRequests("pending", token);
+      setMergeRequests(requests);
+      setLeadQueueError("");
+    } catch (err) {
+      setMergeRequests([]);
+      setLeadQueueError(getErrorText(err, "Failed to load lead merge queue"));
+    }
+  };
+
+  useEffect(() => {
+    void loadMergeRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, role]);
+
+  useEffect(() => {
+    if (!canApproveDuplicateMergeRequest) {
+      setLeadQueueOpen(false);
+    }
+  }, [canApproveDuplicateMergeRequest]);
+
   const availableComponents = useMemo(() => {
     const set = new Set(defects.map((d) => d.component));
     return Array.from(set).sort();
@@ -192,6 +271,30 @@ export default function QASprintPage() {
     if (!duplicateResults.length) return null;
     return duplicateResults[selectedDuplicateIndex] ?? duplicateResults[0];
   }, [duplicateResults, selectedDuplicateIndex]);
+
+  const selectedDuplicateCanonicalId = useMemo(() => {
+    return duplicateCanonicalByIndex[selectedDuplicateIndex] ?? selectedDuplicateGroup?.items[0]?.defect_id ?? null;
+  }, [duplicateCanonicalByIndex, selectedDuplicateGroup, selectedDuplicateIndex]);
+
+  const selectedPendingMergeRequest = useMemo(() => {
+    if (!selectedDuplicateGroup || !selectedDuplicateCanonicalId || !mergeRequests.length) return null;
+    const groupDefectIds = selectedDuplicateGroup.items
+      .map((item) => item.defect_id)
+      .sort((a, b) => a - b);
+
+    return (
+      mergeRequests.find((request) => {
+        const requestDefectIds = [request.canonical_defect_id, ...request.source_defect_ids].sort((a, b) => a - b);
+        return JSON.stringify(requestDefectIds) === JSON.stringify(groupDefectIds);
+      }) ?? null
+    );
+  }, [mergeRequests, selectedDuplicateCanonicalId, selectedDuplicateGroup]);
+
+  const visibleDefects = useMemo(() => {
+    if (!duplicateFocusDefectIds?.length) return defects;
+    const idSet = new Set(duplicateFocusDefectIds);
+    return defects.filter((defect) => idSet.has(defect.defect_id));
+  }, [defects, duplicateFocusDefectIds]);
 
   const componentHeatmapRows = useMemo(() => {
     const map = new Map<string, Record<string, number>>();
@@ -373,15 +476,24 @@ export default function QASprintPage() {
     }
   };
 
-  const runDuplicates = async () => {
+  const runDuplicates = async (forceRefresh = false) => {
     try {
-      const result = await runQADuplicateDetection(filters.sprints, token);
+      const result = await runQADuplicateDetection(filters.sprints, { forceRefresh }, token);
       const nextGroups = result.groups || [];
       const nextSelectedIndex = 0;
+      const nextCanonicalByIndex: Record<number, number> = {};
+      nextGroups.forEach((group, idx) => {
+        if (group.items.length) nextCanonicalByIndex[idx] = group.items[0].defect_id;
+      });
       setDuplicateResults(nextGroups);
       setSelectedDuplicateIndex(0);
+      setDuplicateCanonicalByIndex(nextCanonicalByIndex);
+      setDuplicateFocusDefectIds(null);
       setAnalysisHasRun(true);
       setAnalysisError("");
+      if (result.cached) {
+        setMessage("Loaded cached duplicate scan results.");
+      }
       setAnalysisByFilter((prev) => ({
         ...prev,
         [analysisFilterKey]: {
@@ -392,10 +504,14 @@ export default function QASprintPage() {
           error: "",
         },
       }));
+      if (canApproveDuplicateMergeRequest) {
+        await loadMergeRequests();
+      }
     } catch (err) {
       const nextError = err instanceof Error ? err.message : "Failed to run duplicate detection";
       setDuplicateResults([]);
       setSelectedDuplicateIndex(0);
+      setDuplicateFocusDefectIds(null);
       setAnalysisHasRun(true);
       setAnalysisError(nextError);
       setAnalysisByFilter((prev) => ({
@@ -408,6 +524,84 @@ export default function QASprintPage() {
           error: nextError,
         },
       }));
+    }
+  };
+
+  const submitSelectedDuplicateMergeRequest = async () => {
+    if (!selectedDuplicateGroup) return;
+
+    const canonicalId = selectedDuplicateCanonicalId;
+    if (!canonicalId) {
+      setAnalysisError("Select a canonical defect before merging.");
+      return;
+    }
+
+    const sourceIds = selectedDuplicateGroup.items
+      .map((item) => item.defect_id)
+      .filter((id) => id !== canonicalId);
+
+    if (!sourceIds.length) {
+      setAnalysisError("At least one non-canonical defect is required to merge.");
+      return;
+    }
+
+    const approved = window.confirm(
+      `Submit merge request for ${sourceIds.length} defect(s) into canonical #${canonicalId}?`
+    );
+    if (!approved) return;
+
+    try {
+      await createQADuplicateMergeRequest(
+        canonicalId,
+        sourceIds,
+        selectedDuplicateGroup.confidence,
+        selectedDuplicateGroup.rationale,
+        token
+      );
+      setMessage(`Merge request submitted for ${sourceIds.length} defect(s) into #${canonicalId}.`);
+      setAnalysisError("");
+      if (canApproveDuplicateMergeRequest) {
+        await loadMergeRequests();
+      }
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : "Failed to submit merge request");
+    }
+  };
+
+  const approveMergeRequest = async (request: QADuplicateMergeRequestItem) => {
+    if (!canApproveDuplicateMergeRequest) return;
+
+    const approved = window.confirm(
+      `Approve request #${request.request_id} and merge ${request.source_defect_ids.length} defect(s) into #${request.canonical_defect_id}?`
+    );
+    if (!approved) return;
+
+    try {
+      await approveQADuplicateMergeRequest(request.request_id, token);
+      setMessage(`Approved request #${request.request_id}. Duplicates merged into #${request.canonical_defect_id}.`);
+      setAnalysisError("");
+      await loadData();
+      await runDuplicates(true);
+      await loadMergeRequests();
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : "Failed to approve merge request");
+    }
+  };
+
+  const rejectMergeRequest = async (request: QADuplicateMergeRequestItem) => {
+    if (!canApproveDuplicateMergeRequest) return;
+
+    const reason = window.prompt(`Decline request #${request.request_id}? Optional reason for the audit trail:`) ?? "";
+
+    try {
+      await rejectQADuplicateMergeRequest(request.request_id, reason.trim() || undefined, token);
+      setMessage(`Rejected request #${request.request_id}.`);
+      setAnalysisError("");
+      await loadData();
+      await runDuplicates(true);
+      await loadMergeRequests();
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : "Failed to reject merge request");
     }
   };
 
@@ -767,20 +961,58 @@ export default function QASprintPage() {
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
           <button className="button button-primary" onClick={exportCsv}>Export CSV</button>
-          {canRunAnalysis && (
+          {canRunAnalysis ? (
             <>
               <button className="button" onClick={runCluster}>Run AI Clustering</button>
-              <button className="button" onClick={runDuplicates}>Find Duplicates</button>
-              {analysisHasRun ? (
-                <button className="button" onClick={() => setAnalysisMinimized((prev) => !prev)}>
-                  {analysisMinimized ? "Show Analysis" : "Minimize Analysis"}
-                </button>
-              ) : null}
             </>
-          )}
+          ) : null}
+          {canRunDuplicateDetection ? <button className="button" onClick={() => runDuplicates(false)}>Find Duplicates</button> : null}
+          {canRunAnalysis && analysisHasRun ? (
+            <button className="button" onClick={() => setAnalysisMinimized((prev) => !prev)}>
+              {analysisMinimized ? "Show Analysis" : "Minimize Analysis"}
+            </button>
+          ) : null}
+          {canApproveDuplicateMergeRequest ? (
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setLeadQueueOpen(true);
+                void loadMergeRequests();
+              }}
+              style={{ position: "relative", paddingRight: mergeRequests.length ? 44 : undefined }}
+            >
+              Lead Merge Queue
+              {mergeRequests.length ? (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -8,
+                    right: -8,
+                    minWidth: 24,
+                    height: 24,
+                    padding: "0 7px",
+                    borderRadius: 999,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "linear-gradient(135deg, #1d4ed8, #2563eb)",
+                    color: "#f8fafc",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    boxShadow: "0 10px 20px rgba(37, 99, 235, 0.28)",
+                    border: "1px solid rgba(191, 219, 254, 0.28)",
+                  }}
+                  aria-label={`${mergeRequests.length} pending merge requests`}
+                >
+                  {mergeRequests.length}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
         </div>
 
-        {canRunAnalysis ? (
+        {canRunAnalysis || canRunDuplicateDetection ? (
           <div style={{ marginBottom: 12, color: "var(--muted)", fontSize: 12 }}>
             <p style={{ margin: "0 0 4px 0" }}>
               AI Clustering groups defect descriptions into recurring issue themes to reduce manual review time.
@@ -791,11 +1023,11 @@ export default function QASprintPage() {
           </div>
         ) : null}
 
-        {canRunAnalysis && !analysisMinimized ? (
+        {(canRunAnalysis || canRunDuplicateDetection) && !analysisMinimized ? (
           <div className="analysis-results-wrap">
             {analysisError ? <p className="analysis-error">{analysisError}</p> : null}
 
-            {clusterResults.length ? (
+            {canRunAnalysis && clusterResults.length ? (
               <section className="analysis-panel">
                 <h3 className="analysis-panel-title">Cluster Themes</h3>
                 <div className="analysis-card-grid">
@@ -812,7 +1044,7 @@ export default function QASprintPage() {
               </section>
             ) : null}
 
-            {duplicateResults.length ? (
+            {canRunDuplicateDetection && duplicateResults.length ? (
               <section className="analysis-panel">
                 <h3 className="analysis-panel-title">Duplicate Groups</h3>
                 <div className="duplicate-layout">
@@ -827,7 +1059,11 @@ export default function QASprintPage() {
                           type="button"
                           role="listitem"
                           className={`duplicate-list-item ${isActive ? "duplicate-list-item-active" : ""}`}
-                          onClick={() => setSelectedDuplicateIndex(idx)}
+                          onClick={() => {
+                            const groupIds = group.items.map((item) => item.defect_id);
+                            setSelectedDuplicateIndex(idx);
+                            setDuplicateFocusDefectIds(groupIds);
+                          }}
                         >
                           <div className="analysis-card-top">
                             <span className="analysis-index">Group {idx + 1}</span>
@@ -852,6 +1088,59 @@ export default function QASprintPage() {
                       </div>
                       <p className="analysis-detail-heading">Defect IDs</p>
                       <p className="analysis-defect-ids">{selectedDuplicateGroup.items.map((item) => `#${item.defect_id}`).join(", ")}</p>
+
+                      {canSubmitDuplicateMergeRequest ? (
+                        <div style={{ display: "grid", gap: 8, marginTop: 10, marginBottom: 10 }}>
+                          <label className="filter-label" style={{ marginBottom: 0 }}>Canonical Defect</label>
+                          <select
+                            className="filter-select"
+                            value={selectedDuplicateCanonicalId ?? ""}
+                            onChange={(e) => {
+                              const nextCanonical = Number(e.target.value);
+                              setDuplicateCanonicalByIndex((prev) => ({ ...prev, [selectedDuplicateIndex]: nextCanonical }));
+                            }}
+                          >
+                            {selectedDuplicateGroup.items.map((item) => (
+                              <option key={item.defect_id} value={item.defect_id}>
+                                #{item.defect_id} - {item.component || "unknown component"}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="button button-small"
+                            onClick={submitSelectedDuplicateMergeRequest}
+                            disabled={Boolean(selectedPendingMergeRequest)}
+                            title={selectedPendingMergeRequest ? `Request #${selectedPendingMergeRequest.request_id} is already pending` : undefined}
+                          >
+                            {selectedPendingMergeRequest ? `Request #${selectedPendingMergeRequest.request_id} Pending` : "Submit Merge Request"}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="analysis-rationale" style={{ marginTop: 10 }}>
+                          Merge requests are available to QA roles.
+                        </p>
+                      )}
+
+                      {selectedPendingMergeRequest ? (
+                        <div
+                          style={{
+                            marginBottom: 10,
+                            padding: 10,
+                            borderRadius: 10,
+                            border: "1px solid rgba(59,130,246,0.35)",
+                            background: "rgba(37,99,235,0.10)",
+                          }}
+                        >
+                          <p style={{ margin: "0 0 4px", fontSize: 12, fontWeight: 700, color: "#bfdbfe", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                            Pending Approval
+                          </p>
+                          <p className="analysis-rationale" style={{ margin: 0 }}>
+                            Request #{selectedPendingMergeRequest.request_id} already covers this canonical/source combination.
+                          </p>
+                        </div>
+                      ) : null}
+
                       <p className="analysis-detail-heading">Full rationale</p>
                       <p className="analysis-rationale">{selectedDuplicateGroup.rationale}</p>
                     </article>
@@ -862,8 +1151,210 @@ export default function QASprintPage() {
           </div>
         ) : null}
 
-        {canRunAnalysis && analysisMinimized && (clusterResults.length || duplicateResults.length || analysisError) ? (
+        {canApproveDuplicateMergeRequest && leadQueueOpen ? (
+          <>
+            <div
+              onClick={() => setLeadQueueOpen(false)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(15, 23, 42, 0.45)",
+                zIndex: 30,
+              }}
+            />
+            <aside
+              aria-live="polite"
+              style={{
+                position: "fixed",
+                top: 0,
+                right: 0,
+                width: "min(420px, 100vw)",
+                height: "100vh",
+                zIndex: 31,
+                background: "linear-gradient(180deg, rgba(15,23,42,0.98), rgba(30,41,59,0.98))",
+                borderLeft: "1px solid rgba(148,163,184,0.18)",
+                boxShadow: "-18px 0 48px rgba(15, 23, 42, 0.42)",
+                padding: 18,
+                overflowY: "auto",
+                display: "grid",
+                alignContent: "start",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#93c5fd", fontWeight: 800 }}>
+                    Lead Action Center
+                  </p>
+                  <h3 className="card-title" style={{ margin: "4px 0 0" }}>Merge Requests</h3>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="analysis-chip">{mergeRequests.length} pending</span>
+                  <button type="button" className="button button-small" onClick={() => setLeadQueueOpen(false)}>
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid rgba(59,130,246,0.28)",
+                  background: "rgba(37,99,235,0.10)",
+                }}
+              >
+                <p style={{ margin: 0, color: "var(--text)", fontWeight: 600 }}>
+                  {mergeRequests.length ? `${mergeRequests.length} merge request${mergeRequests.length === 1 ? "" : "s"} waiting for approval.` : "Queue is clear."}
+                </p>
+                <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 12 }}>
+                  Use this sidebar whenever the action-bar badge shows pending work.
+                </p>
+                {leadQueueError ? (
+                  <p style={{ margin: "8px 0 0", color: "#fca5a5", fontSize: 12 }}>
+                    {leadQueueError}
+                  </p>
+                ) : null}
+                <div style={{ marginTop: 10 }}>
+                  <button type="button" className="button button-small" onClick={() => void loadMergeRequests()}>
+                    Refresh Queue
+                  </button>
+                </div>
+              </div>
+
+              {mergeRequests.length ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {mergeRequests.map((request) => (
+                    <div
+                      key={request.request_id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: 12,
+                        background: "rgba(15,23,42,0.28)",
+                        display: "grid",
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 12 }}>
+                        <div>
+                          <p className="analysis-defect-ids" style={{ margin: 0 }}>
+                            Request #{request.request_id}: #{request.canonical_defect_id} ← {request.source_defect_ids.map((id) => `#${id}`).join(", ")}
+                          </p>
+                          <p className="analysis-rationale" style={{ margin: "6px 0 0" }}>
+                            By {formatDisplayLabel(request.requested_by)} on {formatDate(request.created_at)}
+                          </p>
+                        </div>
+                        <span className="analysis-chip">Pending</span>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {request.confidence_score !== null ? (
+                          <span className={`analysis-chip analysis-chip-${getConfidenceLabel(request.confidence_score)}`}>
+                            {(request.confidence_score * 100).toFixed(0)}% match
+                          </span>
+                        ) : null}
+                        {request.canonical_defect?.sprint_id ? (
+                          <span className="analysis-chip">Sprint {request.canonical_defect.sprint_id}</span>
+                        ) : null}
+                        <span className="analysis-chip">{request.source_defects.length} incoming</span>
+                      </div>
+                      {request.reason ? <p className="analysis-rationale" style={{ margin: 0 }}>{request.reason}</p> : null}
+                      {request.canonical_defect ? (
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 8,
+                            padding: 10,
+                            borderRadius: 10,
+                            border: "1px solid rgba(59,130,246,0.22)",
+                            background: "rgba(37,99,235,0.08)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#93c5fd", fontWeight: 800 }}>
+                              Canonical Ticket
+                            </span>
+                            <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, ...getSeverityBadgeStyle(request.canonical_defect.severity) }}>
+                              {formatDisplayLabel(request.canonical_defect.severity)}
+                            </span>
+                            <span className="analysis-chip">{formatDisplayLabel(request.canonical_defect.status)}</span>
+                          </div>
+                          <p style={{ margin: 0, color: "var(--text)", fontWeight: 700 }}>
+                            #{request.canonical_defect.defect_id} {request.canonical_defect.title}
+                          </p>
+                          <p className="analysis-rationale" style={{ margin: 0 }}>
+                            {formatDisplayLabel(request.canonical_defect.component)} | Assignee: {request.canonical_defect.assignee ? formatDisplayLabel(request.canonical_defect.assignee) : "Unassigned"}
+                          </p>
+                        </div>
+                      ) : null}
+                      {request.source_defects.length ? (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <p style={{ margin: 0, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)", fontWeight: 700 }}>
+                            Incoming Duplicates
+                          </p>
+                          {request.source_defects.map((defect) => (
+                            <div
+                              key={defect.defect_id}
+                              style={{
+                                padding: 10,
+                                borderRadius: 10,
+                                border: "1px solid rgba(148,163,184,0.14)",
+                                background: "rgba(15,23,42,0.22)",
+                                display: "grid",
+                                gap: 5,
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                <p style={{ margin: 0, color: "var(--text)", fontWeight: 600 }}>
+                                  #{defect.defect_id} {defect.title}
+                                </p>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                  <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, ...getSeverityBadgeStyle(defect.severity) }}>
+                                    {formatDisplayLabel(defect.severity)}
+                                  </span>
+                                  <span className="analysis-chip">{formatDisplayLabel(defect.status)}</span>
+                                </div>
+                              </div>
+                              <p className="analysis-rationale" style={{ margin: 0 }}>
+                                {formatDisplayLabel(defect.component)} | Assignee: {defect.assignee ? formatDisplayLabel(defect.assignee) : "Unassigned"}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button type="button" className="button button-small" onClick={() => approveMergeRequest(request)}>
+                          Approve Merge
+                        </button>
+                        <button type="button" className="button button-small" onClick={() => rejectMergeRequest(request)}>
+                          Decline Merge
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="analysis-rationale" style={{ margin: 0 }}>
+                  No pending merge requests.
+                </p>
+              )}
+            </aside>
+          </>
+        ) : null}
+
+        {(canRunAnalysis || canRunDuplicateDetection) && analysisMinimized && (clusterResults.length || duplicateResults.length || analysisError) ? (
           <p className="analysis-minimized-note">Analysis results minimized. Click "Show Analysis" to expand.</p>
+        ) : null}
+
+        {duplicateFocusDefectIds?.length ? (
+          <div className="card" style={{ marginBottom: 12, padding: 12 }}>
+            <p style={{ margin: "0 0 8px 0" }}>
+              Showing defects for selected duplicate group: <strong>{duplicateFocusDefectIds.map((id) => `#${id}`).join(", ")}</strong>
+            </p>
+            <button type="button" className="button button-small" onClick={() => setDuplicateFocusDefectIds(null)}>
+              Clear Duplicate Group Filter
+            </button>
+          </div>
         ) : null}
 
         {loading ? <p>Loading QA defects...</p> : null}
@@ -884,7 +1375,7 @@ export default function QASprintPage() {
               </tr>
             </thead>
             <tbody>
-              {defects.map((defect) => (
+              {visibleDefects.map((defect) => (
                 <tr
                   key={defect.defect_id}
                   style={{ cursor: "pointer", background: selected?.defect_id === defect.defect_id ? "rgba(59,130,246,0.14)" : undefined }}
@@ -968,8 +1459,6 @@ export default function QASprintPage() {
                   <option value="investigating">Investigating</option>
                   <option value="escalated">Escalated</option>
                   <option value="resolved">Resolved</option>
-                  <option value="duplicate_pending">Duplicate Pending</option>
-                  {canApproveDuplicateMerge ? <option value="duplicate_merged">Duplicate Merged</option> : null}
                 </select>
                 {statusDraft === "resolved" ? (
                   <select className="filter-select" value={resolutionReason} onChange={(e) => setResolutionReason(e.target.value)}>
