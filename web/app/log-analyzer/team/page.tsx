@@ -514,7 +514,7 @@ export default function TeamDashboard() {
       </div>
 
       {isManager && (
-        <div className="manager-insight-grid" style={{ marginTop: "20px" }}>
+        <div className="manager-insight-grid" style={{ marginTop: "20px", marginBottom: "16px" }}>
           <div className="card manager-panel">
             <div className="card-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <h3 className="card-title" style={{ margin: 0 }}>🚩 Flagged Watchlist (Open)</h3>
