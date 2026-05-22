@@ -69,13 +69,14 @@ export default function TeamDashboard() {
   const saveMessageTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const { role, token, username, isManager } = useRoleContext();
   const resolvedToken = token ?? undefined;
+  const canChangeWorkflow = role !== "infrastructure_developer";
 
   const [briefText, setBriefText] = useState<string | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [demoToast, setDemoToast] = useState<{ tone: "warn" | "critical"; message: string } | null>(null);
   const [demoBanner, setDemoBanner] = useState<string | null>(null);
 
-  if (!["ops_engineer", "support_manager", "it_admin"].includes(role)) {
+  if (!["ops_engineer", "support_manager", "it_admin", "infrastructure_developer"].includes(role)) {
     return (
       <div className="card">
         <div className="card-header">
@@ -235,6 +236,10 @@ export default function TeamDashboard() {
   };
 
   const handleAssign = async (logId: number, assignedTo: string | null, status?: string) => {
+    if (!canChangeWorkflow) {
+      setSaveMessage({ text: "Infrastructure Developer is read-only in this tool.", type: "error" });
+      return;
+    }
     const previousLog = logs.find((log) => log.log_id === logId);
     const normalizedAssignedTo = assignedTo ?? null;
     const normalizedStatus = status ?? previousLog?.status;
@@ -281,6 +286,10 @@ export default function TeamDashboard() {
   };
 
   const handleFlag = async (logId: number, flagged: boolean, reason?: string) => {
+    if (!canChangeWorkflow) {
+      setSaveMessage({ text: "Infrastructure Developer is read-only in this tool.", type: "error" });
+      return;
+    }
     try {
       setFlagLoading(true);
       const result = await updateLogFlag(logId, flagged, reason, username, resolvedToken);
@@ -445,7 +454,7 @@ export default function TeamDashboard() {
 
       {isManager && <ManagerTimelineChart logs={filteredLogs} />}
 
-      <div className="stats-grid">
+      <div className="stats-grid stats-grid-team">
         <button
           type="button"
           className={`stat-card stat-card-interactive ${isMetricActive("anomaly") ? "stat-card-active" : ""}`}
@@ -505,7 +514,7 @@ export default function TeamDashboard() {
       </div>
 
       {isManager && (
-        <div className="manager-insight-grid" style={{ marginTop: "20px" }}>
+        <div className="manager-insight-grid" style={{ marginTop: "20px", marginBottom: "16px" }}>
           <div className="card manager-panel">
             <div className="card-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <h3 className="card-title" style={{ margin: 0 }}>🚩 Flagged Watchlist (Open)</h3>
@@ -678,7 +687,7 @@ export default function TeamDashboard() {
           isLoading={explainLoading}
           explanation={explanation || undefined}
           isManager={isManager}
-          canFlag={isManager || selectedLog.assigned_to === username}
+          canFlag={canChangeWorkflow && (isManager || selectedLog.assigned_to === username)}
         />
       )}
     </div>

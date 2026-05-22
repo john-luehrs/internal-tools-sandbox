@@ -9,7 +9,7 @@ import csv
 import io
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Depends, Header, Response
+from fastapi import FastAPI, HTTPException, Depends, Header, Response, Request
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -230,6 +230,7 @@ DEMO_TOKENS = {
     "token-carol": "ops_engineer",
     "token-hr": "hr_admin",
     "token-it": "it_admin",
+    "token-infra": "infrastructure_developer",
 }
 
 DEMO_ACTORS = {
@@ -242,11 +243,39 @@ DEMO_ACTORS = {
     "token-qa-taylor": "taylor",
     "token-qa-lead": "riley",
     "token-qa-manager": "morgan",
+    "token-infra": "ivan",
 }
 
 
-def get_role(authorization: Optional[str] = Header(default="Bearer token-agent")) -> str:
-    token = (authorization or "").replace("Bearer ", "").strip()
+def _extract_token(authorization: Optional[str], x_token: Optional[str]) -> str:
+    raw_auth = (authorization or "").strip()
+    raw_x = (x_token or "").strip()
+
+    candidate = ""
+    if raw_auth:
+        parts = raw_auth.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            candidate = parts[1]
+        else:
+            candidate = raw_auth
+    elif raw_x:
+        candidate = raw_x
+
+    # Normalize wrappers and common transport artifacts.
+    candidate = candidate.strip().strip('"').strip("'").rstrip(",;")
+    return candidate
+
+
+def get_role(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    x_token: Optional[str] = Header(default=None, alias="X-Token"),
+) -> str:
+    auth_header = authorization or request.headers.get("authorization")
+    x_token_header = x_token or request.headers.get("x-token")
+    token = _extract_token(auth_header, x_token_header)
+    if not token:
+        token = "token-agent"
     role = DEMO_TOKENS.get(token)
     if not role:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
@@ -308,6 +337,7 @@ def ai_summarize(req: SummarizeRequest, role: str = Depends(get_role)):
 # QA Defects
 # ---------------------------------------------------------------------------
 QA_ROLES = ("qa_engineer", "qa_lead", "qa_manager")
+QA_VIEW_ROLES = (*QA_ROLES, "infrastructure_developer")
 QA_ANALYSIS_ROLES = ("qa_lead", "qa_manager")
 
 
@@ -324,7 +354,7 @@ def _parse_csv_param(raw: Optional[str]) -> list[str]:
 
 @app.get("/api/qa/sprints")
 def list_qa_sprints(role: str = Depends(get_role)):
-    if role not in QA_ROLES:
+    if role not in QA_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="QA role required")
 
     conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
@@ -351,7 +381,7 @@ def list_qa_defects(
     assignee: Optional[str] = None,
     role: str = Depends(get_role),
 ):
-    if role not in QA_ROLES:
+    if role not in QA_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="QA role required")
 
     sprint_filters = _parse_csv_param(sprints)
@@ -390,7 +420,7 @@ def get_qa_heatmap(
     sprints: Optional[str] = None,
     role: str = Depends(get_role),
 ):
-    if role not in QA_ROLES:
+    if role not in QA_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="QA role required")
 
     sprint_filters = _parse_csv_param(sprints)
@@ -422,7 +452,7 @@ def list_qa_notes(
     defect_id: int,
     role: str = Depends(get_role),
 ):
-    if role not in QA_ROLES:
+    if role not in QA_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="QA role required")
 
     conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
@@ -657,7 +687,7 @@ def run_qa_duplicate_detection(
     role: str = Depends(get_role),
     authorization: Optional[str] = Header(default="Bearer token-agent"),
 ):
-    if role not in QA_ROLES:
+    if role not in QA_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="QA role required")
 
     sprint_filters = [s.strip() for s in req.sprints if s.strip()]
@@ -1252,7 +1282,7 @@ def export_qa_report_csv(
     assignee: Optional[str] = None,
     role: str = Depends(get_role),
 ):
-    if role not in QA_ROLES:
+    if role not in QA_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="QA role required")
 
     sprint_filters = _parse_csv_param(sprints)
@@ -1308,6 +1338,10 @@ def export_qa_report_csv(
 # ---------------------------------------------------------------------------
 # Logs
 # ---------------------------------------------------------------------------
+LOG_VIEW_ROLES = ("ops_engineer", "it_admin", "support_manager", "infrastructure_developer")
+LOG_EDIT_ROLES = ("ops_engineer", "it_admin", "support_manager")
+
+
 @app.get("/api/logs/team")
 def list_team_logs(
     level: Optional[str] = None,
@@ -1317,7 +1351,7 @@ def list_team_logs(
     sort: str = "timestamp",
     role: str = Depends(get_role),
 ):
-    if role not in ("ops_engineer", "it_admin", "support_manager"):
+    if role not in LOG_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -1351,7 +1385,7 @@ def list_team_logs(
 
 @app.get("/api/logs/my-assigned")
 def list_assigned_logs(engineer: str, role: str = Depends(get_role)):
-    if role not in ("ops_engineer", "it_admin", "support_manager"):
+    if role not in LOG_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -1367,7 +1401,7 @@ def list_assigned_logs(engineer: str, role: str = Depends(get_role)):
 
 @app.get("/api/logs/stats")
 def get_logs_stats(role: str = Depends(get_role)):
-    if role not in ("ops_engineer", "it_admin", "support_manager"):
+    if role not in LOG_VIEW_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -1439,7 +1473,7 @@ class StatusRequest(BaseModel):
 
 @app.patch("/api/logs/{log_id}/status")
 def update_log_status(log_id: int, req: StatusRequest, role: str = Depends(get_role)):
-    if role not in ("ops_engineer", "it_admin", "support_manager"):
+    if role not in LOG_EDIT_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -1536,7 +1570,7 @@ def update_log_flag(
     role: str = Depends(get_role),
     authorization: Optional[str] = Header(default="Bearer token-agent"),
 ):
-    if role not in ("ops_engineer", "it_admin", "support_manager"):
+    if role not in LOG_EDIT_ROLES:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
 
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))
@@ -1603,7 +1637,7 @@ def explain_log(
     safe_mode: bool = True,
     role: str = Depends(get_role),
 ):
-    if role not in ("ops_engineer", "it_admin"):
+    if role not in ("ops_engineer", "it_admin", "infrastructure_developer"):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     
     conn = sqlite3.connect(os.path.join(DB_DIR, "logs.db"))

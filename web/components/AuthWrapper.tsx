@@ -3,8 +3,19 @@
 import React, { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import EmployeeSidebarStats from "@/components/EmployeeSidebarStats";
+import QASidebarContext from "@/components/QASidebarContext";
 import { useRole } from "@/hooks/useRole";
-import { ROLES, PERSONAS, PersonaKey, Role } from "@/lib/auth";
+import {
+  ROLES,
+  PERSONAS,
+  TOOLS,
+  PersonaKey,
+  Role,
+  ToolKey,
+  getPersonasForTool,
+  getToolFromPath,
+  roleCanAccessTool,
+} from "@/lib/auth";
 import { RoleContext } from "@/lib/RoleContext";
 
 const LOGIN_PASSWORD = "password";
@@ -13,9 +24,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   const { role, token, username, isManager, isAuthenticated, login, logout } = useRole();
   const [hydrated, setHydrated] = useState(false);
   const pathname = usePathname();
-
-  const qaRoles = new Set<Role>(["qa_engineer", "qa_lead", "qa_manager"]);
-  const isQaRole = qaRoles.has(role as Role);
+  const activeTool = getToolFromPath(pathname);
 
   useEffect(() => {
     setHydrated(true);
@@ -23,28 +32,47 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
 
   if (!hydrated) return null;
 
-  if (!isAuthenticated || !role || !token || !username) {
-    return <LoginScreen onLogin={login} />;
+  // Public pages (for now, tool landing) do not require auth shell.
+  if (!activeTool) {
+    return <>{children}</>;
   }
+
+  const isToolAuthorized = role ? roleCanAccessTool(role as Role, activeTool) : false;
+
+  if (!isAuthenticated || !role || !token || !username || !isToolAuthorized) {
+    return <LoginScreen onLogin={login} tool={activeTool} />;
+  }
+
+  const availableTools = (Object.keys(TOOLS) as ToolKey[]).filter((toolKey) =>
+    roleCanAccessTool(role as Role, toolKey)
+  );
 
   return (
     <RoleContext.Provider value={{ role, token, username, isManager, logout }}>
       <div className="main-container">
         <nav className="sidebar">
+          <div className="sidebar-brand">
+            <p className="sidebar-brand-kicker">Operations Console</p>
+            <h1 className="sidebar-brand-title">Internal Tools</h1>
+            <p className="sidebar-brand-subtitle">Live workflows for incident and QA operations.</p>
+          </div>
           <div className="sidebar-section">
             <h2 className="sidebar-title">Tools</h2>
-            {!isQaRole ? (
-              <a href="/log-analyzer/team" className={`nav-link${pathname?.startsWith("/log-analyzer") ? " active" : ""}`}>
-                📊 Log Analyzer
+            {availableTools.map((toolKey) => (
+              <a
+                key={toolKey}
+                href={TOOLS[toolKey].path}
+                className={`nav-link${pathname?.startsWith(`/${toolKey}`) ? " active" : ""}`}
+              >
+                {toolKey === "log-analyzer" ? "📊" : "🧪"} {TOOLS[toolKey].label}
               </a>
-            ) : null}
-            {isQaRole ? (
-              <a href="/qa-analyzer/sprint" className={`nav-link${pathname?.startsWith("/qa-analyzer") ? " active" : ""}`}>
-                🧪 QA Analyzer
-              </a>
-            ) : null}
+            ))}
           </div>
           <div className="sidebar-user-section">
+            <div className="session-chip-row">
+              <span className="session-chip">{availableTools.length} tools</span>
+              <span className="session-chip">online</span>
+            </div>
             <div className="sidebar-user-role">
               <span className="sidebar-user-name">{PERSONAS[username].name}</span>
               <span className={`role-badge role-badge-${role}`}>
@@ -55,6 +83,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
               Sign out
             </button>
           </div>
+          {activeTool === "qa-analyzer" && <QASidebarContext />}
           {isManager && <EmployeeSidebarStats />}
         </nav>
         <main className="content">{children}</main>
@@ -63,10 +92,11 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: (key: PersonaKey) => void }) {
+function LoginScreen({ onLogin, tool }: { onLogin: (key: PersonaKey) => void; tool: ToolKey }) {
   const [selected, setSelected] = useState<PersonaKey | null>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const toolPersonas = getPersonasForTool(tool);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,44 +112,19 @@ function LoginScreen({ onLogin }: { onLogin: (key: PersonaKey) => void }) {
     onLogin(selected);
   };
 
-  const engineers: PersonaKey[] = ["alice", "bob", "carol"];
-  const managers: PersonaKey[] = ["dana", "evan", "morgan"];
-  const qaRoles: PersonaKey[] = ["quinn", "riley", "taylor"];
-
   return (
     <div className="login-screen">
       <div className="login-card login-card-wide">
         <div className="login-header">
           <div className="login-logo">🔧</div>
           <h1 className="login-title">Internal Tools Sandbox</h1>
-          <p className="login-subtitle">Select a persona to explore role-based access control</p>
+          <p className="login-subtitle">Sign in to {TOOLS[tool].label} with an authorized persona</p>
         </div>
 
-        <div className="persona-section">
-          <p className="persona-section-label">Ops Engineers</p>
-          <div className="persona-grid persona-grid-3">
-            {engineers.map((key) => (
-              <PersonaCard key={key} personaKey={key} selected={selected === key} onSelect={setSelected} />
-            ))}
-          </div>
-        </div>
-
-        <div className="persona-section">
-          <p className="persona-section-label">Management</p>
-          <div className="persona-grid persona-grid-3">
-            {managers.map((key) => (
-              <PersonaCard key={key} personaKey={key} selected={selected === key} onSelect={setSelected} />
-            ))}
-          </div>
-        </div>
-
-        <div className="persona-section">
-          <p className="persona-section-label">QA Personas</p>
-          <div className="persona-grid persona-grid-3">
-            {qaRoles.map((key) => (
-              <PersonaCard key={key} personaKey={key} selected={selected === key} onSelect={setSelected} />
-            ))}
-          </div>
+        <div className="persona-grid persona-grid-3">
+          {toolPersonas.map((key) => (
+            <PersonaCard key={key} personaKey={key} selected={selected === key} onSelect={setSelected} />
+          ))}
         </div>
 
         <form onSubmit={handleSubmit} className="login-form" style={{ marginTop: 8 }}>

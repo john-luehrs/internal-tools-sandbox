@@ -6,7 +6,7 @@ See `CHANGELOG.md` for the complete release history.
 
 ## Recruiter Snapshot
 
-- Built an operations-focused incident triage tool with role-based workflows for ops engineers, support managers, and IT admins.
+- Built an operations-focused incident triage tool with role-based workflows for ops engineers, support managers, IT admins, and read-only infrastructure developers.
 - Demonstrates MTTD-driven escalation logic with visible +5, +10, +15 minute notification behavior and acknowledgment-based suppression.
 - Includes assignment/status controls, anomaly flagging, manager watchlist, and audit-aware AI summaries.
 - Designed for repeatable demos with one-click demo log creation and cleanup.
@@ -69,6 +69,9 @@ Shows RBAC in action: what an ops engineer sees versus what a manager sees.
    - Note: sidebar shows team workload breakdown, MTTD demo controls, and AI Ops Brief.
    - Team dashboard shows all 6 stat cards including **Flagged** and **Avg Anomaly Score**.
    - Team queue allows reassignment to any engineer.
+3. Sign out and sign in as **Ivan** (infrastructure developer).
+	- Note: team dashboard is view-only for workflow controls (no assignment/status updates).
+	- Note: AI explanation remains available for investigation context.
 
 ---
 
@@ -92,7 +95,7 @@ Shows risk flagging, RBAC enforcement, and manager watchlist.
 
 Shows the safe AI summary flow with redaction and audit logging.
 
-1. Sign in as **Dana** or **Alice**.
+1. Sign in as **Dana**, **Alice**, or **Ivan**.
 2. Open any log with an anomaly score above 70.
 3. In the log detail modal, click **Get AI Explanation**.
 4. Observe the structured output: anomaly reasoning, recommended action, and redacted field indicators.
@@ -159,5 +162,6 @@ The primary v3.0 dashboard flow is web-based:
 - Alice, Bob, Carol: ops engineers with personal queue views and status updates
 - Dana: support manager with workload controls, team analytics, and ops brief access
 - Evan: IT admin with the same elevated workflow visibility as the manager role
+- Ivan: infrastructure developer with read-only dashboard access and AI explanation support
 
 Both require `db/logs.db` — run `py scripts/bootstrap.py` first.

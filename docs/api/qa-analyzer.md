@@ -3,6 +3,7 @@
 **Tool:** QA Defect Pattern Analyzer (Tool 2)  
 **Module:** `services/api.py` (`/api/qa/*`)  
 **Roles Required:** `qa_engineer`, `qa_lead`, `qa_manager`  
+**Read-Only Role:** `infrastructure_developer` (view/analysis-read endpoints only)  
 
 ---
 
@@ -22,6 +23,10 @@ The QA Analyzer API manages sprint-based defect triage, clustering, and duplicat
 - **Severity:** `critical`, `high`, `medium`, `low`
 - **Notes:** Triage investigation log with timestamps and author
 - **Confidence:** Duplicate detection confidence (0.0-1.0)
+
+**Authentication Headers:**
+- `Authorization: Bearer <token>` (preferred)
+- `X-Token: <token>` (supported)
 
 ---
 
@@ -73,7 +78,7 @@ curl -X GET http://localhost:8000/api/qa/sprints \
 
 **Description:** List defects with optional filtering by sprint, severity, component, status, or assignee.
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`, `infrastructure_developer`)
 
 **Query Parameters:**
 
@@ -125,7 +130,7 @@ curl -X GET "http://localhost:8000/api/qa/defects?sprints=S510,S511&severity=hig
 
 **Description:** Get defect distribution by component and severity across sprints (useful for dashboard heatmaps).
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`, `infrastructure_developer`)
 
 **Query Parameters:**
 
@@ -171,7 +176,7 @@ curl -X GET "http://localhost:8000/api/qa/trends/heatmap?sprints=S510" \
 
 **Description:** Get triage notes history for a defect (ordered newest first).
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`, `infrastructure_developer`)
 
 **Path Parameters:**
 
@@ -226,7 +231,7 @@ curl -X GET http://localhost:8000/api/qa/defects/5/notes \
 
 **Description:** Add a triage note to a defect.
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`, `infrastructure_developer`)
 
 **Path Parameters:**
 
@@ -350,7 +355,7 @@ curl -X PATCH http://localhost:8000/api/qa/defects/5/status \
 
 **Description:** Reassign defect to a team member. Only leads and managers can reassign.
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_lead`, `qa_manager`)
 
 **Path Parameters:**
 
@@ -408,7 +413,7 @@ curl -X PATCH http://localhost:8000/api/qa/defects/5/assign \
 
 **Description:** Run AI-powered clustering on defect descriptions. Groups similar defect themes to reduce manual review time.
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_lead`, `qa_manager`)
 
 **Request Body:**
 
@@ -470,7 +475,7 @@ curl -X POST http://localhost:8000/api/qa/analysis/cluster \
 
 **Description:** Run AI-powered duplicate detection. Identifies semantically similar defects and calculates confidence scores with explanation rationales.
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`, `infrastructure_developer`)
 
 **Request Body:**
 
@@ -623,7 +628,7 @@ curl -X POST http://localhost:8000/api/qa/analysis/duplicates/merge \
 
 **Description:** Submit a duplicate merge request for QA lead/manager approval.
 
-**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`, `infrastructure_developer`)
 
 **Request Body:**
 
