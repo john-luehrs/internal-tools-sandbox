@@ -1,6 +1,6 @@
 # QA Defect Pattern Analyzer
 
-Current milestone: Spec Update 1 is complete and testable in the web UI.
+Current milestone: Spec Update 2 is complete and testable in the web UI.
 
 See `CHANGELOG.md` for release history and update scope.
 
@@ -19,6 +19,14 @@ See `CHANGELOG.md` for release history and update scope.
 - Severity distribution visualization from backend heatmap totals
 - Click-to-filter bridge from heatmap/distribution into defect table filters
 - Sprint filter clear action and stable top-panel layout for test walkthroughs
+
+## Update 2 (Complete)
+
+- Duplicate detection is runnable by all QA roles with DB-backed cached scan reuse
+- Duplicate detection groups are reviewable by confidence and rationale
+- QA users submit duplicate merge requests (canonical + sources + rationale)
+- QA lead/manager reviews a pending merge-request queue and approves merges from review view
+- On approval, merge action links source defects to canonical via `canonical_defect_id` and marks sources as `duplicate_merged`
 
 ## API + Docs Alignment
 

@@ -97,6 +97,39 @@ def ensure_qa_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS qa_duplicate_scans (
+            scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sprint_scope_key TEXT UNIQUE NOT NULL,
+            sprint_scope TEXT NOT NULL,
+            input_count INTEGER NOT NULL,
+            groups_json TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS defect_merge_requests (
+            request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            canonical_defect_id INTEGER NOT NULL,
+            source_defect_ids_json TEXT NOT NULL,
+            source_previous_statuses_json TEXT,
+            request_key TEXT,
+            confidence_score REAL,
+            reason TEXT,
+            requested_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            approved_by TEXT,
+            approved_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
     existing = {row[1] for row in conn.execute("PRAGMA table_info(defects)").fetchall()}
     required = {
@@ -127,6 +160,47 @@ def ensure_qa_schema(conn: sqlite3.Connection) -> None:
     for col, col_type in sprint_required.items():
         if col not in existing_sprints:
             conn.execute(f"ALTER TABLE sprints ADD COLUMN {col} {col_type}")
+
+    existing_merge_requests = {row[1] for row in conn.execute("PRAGMA table_info(defect_merge_requests)").fetchall()}
+    if "source_previous_statuses_json" not in existing_merge_requests:
+        conn.execute("ALTER TABLE defect_merge_requests ADD COLUMN source_previous_statuses_json TEXT")
+    if "request_key" not in existing_merge_requests:
+        conn.execute("ALTER TABLE defect_merge_requests ADD COLUMN request_key TEXT")
+
+    merge_request_rows = conn.execute(
+        """
+        SELECT request_id, canonical_defect_id, source_defect_ids_json, status, updated_at
+        FROM defect_merge_requests
+        ORDER BY request_id DESC
+        """
+    ).fetchall()
+    seen_pending_keys: set[str] = set()
+    now = datetime.utcnow().isoformat() + "Z"
+    for row in merge_request_rows:
+        request_key = _build_merge_request_key(
+            row["canonical_defect_id"],
+            json.loads(row["source_defect_ids_json"]),
+        )
+        if row["status"] == "pending":
+            if request_key in seen_pending_keys:
+                conn.execute(
+                    "UPDATE defect_merge_requests SET request_key = ?, status = 'rejected', updated_at = ? WHERE request_id = ?",
+                    (request_key, now, row["request_id"]),
+                )
+                continue
+            seen_pending_keys.add(request_key)
+        conn.execute(
+            "UPDATE defect_merge_requests SET request_key = ? WHERE request_id = ?",
+            (request_key, row["request_id"]),
+        )
+
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_merge_requests_pending_key
+        ON defect_merge_requests(request_key)
+        WHERE status = 'pending' AND request_key IS NOT NULL
+        """
+    )
 
     # Normalize old schema naming from legacy seed script.
     if "sprint" in existing and "sprint_id" in required:
@@ -439,8 +513,16 @@ def update_qa_status(
     }
     if req.status not in allowed_statuses:
         raise HTTPException(status_code=400, detail="Invalid status")
-    if req.status == "duplicate_merged" and role not in ("qa_lead", "qa_manager"):
-        raise HTTPException(status_code=403, detail="Only QA lead or manager can mark duplicate merged")
+    if req.status == "duplicate_pending":
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate Pending is set by the duplicate merge request workflow. Submit a merge request instead of setting it manually.",
+        )
+    if req.status == "duplicate_merged":
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate Merged is set by merge request approval. Approve a merge request instead of setting it manually.",
+        )
     if req.status == "resolved" and not req.resolution_reason:
         raise HTTPException(status_code=400, detail="Resolution reason is required when resolving")
 
@@ -566,6 +648,7 @@ def run_qa_cluster(
 
 class QADuplicateRequest(BaseModel):
     sprints: list[str] = []
+    force_refresh: bool = False
 
 
 @app.post("/api/qa/analysis/duplicates")
@@ -574,11 +657,13 @@ def run_qa_duplicate_detection(
     role: str = Depends(get_role),
     authorization: Optional[str] = Header(default="Bearer token-agent"),
 ):
-    if role not in QA_ANALYSIS_ROLES:
-        raise HTTPException(status_code=403, detail="Only QA lead or manager can run duplicate detection")
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
 
     sprint_filters = [s.strip() for s in req.sprints if s.strip()]
-    query = "SELECT defect_id, description, component FROM defects WHERE 1=1"
+    sprint_scope = sorted(set(sprint_filters))
+    sprint_scope_key = "__all__" if not sprint_scope else ",".join(sprint_scope)
+    query = "SELECT defect_id, description, component, sprint_id FROM defects WHERE 1=1"
     params: list[str] = []
     if sprint_filters:
         placeholders = ",".join(["?"] * len(sprint_filters))
@@ -588,14 +673,39 @@ def run_qa_duplicate_detection(
     conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
     conn.row_factory = sqlite3.Row
     ensure_qa_schema(conn)
+
+    actor = _get_qa_actor(authorization, role)
+
+    if not req.force_refresh:
+        cached = conn.execute(
+            "SELECT input_count, groups_json FROM qa_duplicate_scans WHERE sprint_scope_key = ?",
+            (sprint_scope_key,),
+        ).fetchone()
+        if cached:
+            groups = json.loads(cached["groups_json"])
+            conn.close()
+            from services.audit_logger import log_action
+            log_action(
+                actor=actor,
+                action="qa_duplicate_scan",
+                entity_id="qa",
+                metadata={
+                    "input_count": cached["input_count"],
+                    "groups": len(groups),
+                    "cached": True,
+                    "scope": sprint_scope_key,
+                },
+            )
+            return {"groups": groups, "input_count": cached["input_count"], "cached": True}
+
     rows = conn.execute(query, params).fetchall()
-    conn.close()
 
     records = [
         {
             "defect_id": r["defect_id"],
             "description": r["description"],
             "component": r["component"],
+            "sprint_id": r["sprint_id"],
         }
         for r in rows
     ]
@@ -617,47 +727,520 @@ def run_qa_duplicate_detection(
         if len(group) < 2:
             continue
 
-        pair_scores = []
-        for idx in range(len(group)):
-            for jdx in range(idx + 1, len(group)):
-                pair_scores.append(_overlap(group[idx]["description"], group[jdx]["description"]))
+        # Merge requests require canonical/source defects to be in the same sprint.
+        # Split AI duplicate groups by sprint so UI candidates are directly actionable.
+        sprint_partition: dict[str, list[dict]] = {}
+        for item in group:
+            sprint_key = str(item.get("sprint_id") or "")
+            sprint_partition.setdefault(sprint_key, []).append(item)
 
-        avg_score = sum(pair_scores) / len(pair_scores) if pair_scores else 0.0
-        confidence = round(min(0.99, max(0.52, avg_score + 0.22)), 2)
+        for sprint_group in sprint_partition.values():
+            if len(sprint_group) < 2:
+                continue
 
-        components = [item.get("component") for item in group if item.get("component")]
-        top_component = max(set(components), key=components.count) if components else None
+            pair_scores = []
+            for idx in range(len(sprint_group)):
+                for jdx in range(idx + 1, len(sprint_group)):
+                    pair_scores.append(_overlap(sprint_group[idx]["description"], sprint_group[jdx]["description"]))
 
-        shared_keywords = set(_tokenize(group[0]["description"]))
-        for item in group[1:]:
-            shared_keywords &= _tokenize(item["description"])
-        keywords_list = sorted(list(shared_keywords))[:3]
+            avg_score = sum(pair_scores) / len(pair_scores) if pair_scores else 0.0
+            confidence = round(min(0.99, max(0.52, avg_score + 0.22)), 2)
 
-        if top_component and keywords_list:
-            rationale = f"Repeated {top_component} issue signals; overlapping terms: {', '.join(keywords_list)}."
-        elif top_component:
-            rationale = f"Repeated {top_component} defect pattern with similar reproduction context."
-        else:
-            rationale = "Descriptions share substantial overlap in wording and symptom pattern."
+            components = [item.get("component") for item in sprint_group if item.get("component")]
+            top_component = max(set(components), key=components.count) if components else None
 
-        enriched_groups.append(
-            {
-                "items": group,
-                "confidence": confidence,
-                "rationale": rationale,
-            }
-        )
+            shared_keywords = set(_tokenize(sprint_group[0]["description"]))
+            for item in sprint_group[1:]:
+                shared_keywords &= _tokenize(item["description"])
+            keywords_list = sorted(list(shared_keywords))[:3]
 
-    actor = _get_qa_actor(authorization, role)
+            if top_component and keywords_list:
+                rationale = f"Repeated {top_component} issue signals; overlapping terms: {', '.join(keywords_list)}."
+            elif top_component:
+                rationale = f"Repeated {top_component} defect pattern with similar reproduction context."
+            else:
+                rationale = "Descriptions share substantial overlap in wording and symptom pattern."
+
+            enriched_groups.append(
+                {
+                    "items": sprint_group,
+                    "confidence": confidence,
+                    "rationale": rationale,
+                }
+            )
+
+    now = datetime.utcnow().isoformat() + "Z"
+    conn.execute(
+        """
+        INSERT INTO qa_duplicate_scans
+        (sprint_scope_key, sprint_scope, input_count, groups_json, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(sprint_scope_key) DO UPDATE SET
+            sprint_scope = excluded.sprint_scope,
+            input_count = excluded.input_count,
+            groups_json = excluded.groups_json,
+            created_by = excluded.created_by,
+            updated_at = excluded.updated_at
+        """,
+        (
+            sprint_scope_key,
+            sprint_scope_key,
+            len(records),
+            json.dumps(enriched_groups),
+            actor,
+            now,
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
     from services.audit_logger import log_action
     log_action(
         actor=actor,
         action="qa_duplicate_scan",
         entity_id="qa",
-        metadata={"input_count": len(records), "groups": len(enriched_groups)},
+        metadata={
+            "input_count": len(records),
+            "groups": len(enriched_groups),
+            "cached": False,
+            "scope": sprint_scope_key,
+        },
     )
 
-    return {"groups": enriched_groups, "input_count": len(records)}
+    return {"groups": enriched_groups, "input_count": len(records), "cached": False}
+
+
+class QADuplicateMergeRequest(BaseModel):
+    canonical_defect_id: int
+    source_defect_ids: list[int]
+    confidence_score: Optional[float] = None
+    reason: Optional[str] = None
+
+
+class QADuplicateMergeDecisionRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+def _validate_duplicate_merge_candidates(conn: sqlite3.Connection, canonical_id: int, source_ids: list[int]) -> dict:
+    all_ids = [canonical_id, *source_ids]
+    placeholders = ",".join(["?"] * len(all_ids))
+    rows = conn.execute(
+        f"SELECT defect_id, sprint_id, status, canonical_defect_id FROM defects WHERE defect_id IN ({placeholders})",
+        all_ids,
+    ).fetchall()
+
+    row_map = {r["defect_id"]: r for r in rows}
+    missing = [d for d in all_ids if d not in row_map]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Defects not found: {missing}")
+
+    sprint_ids = {row_map[d]["sprint_id"] for d in all_ids}
+    if len(sprint_ids) != 1:
+        raise HTTPException(status_code=400, detail="Merge candidates must be in the same sprint")
+
+    for source_id in source_ids:
+        existing_canonical = row_map[source_id]["canonical_defect_id"]
+        if existing_canonical is not None and existing_canonical != canonical_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Defect {source_id} is already merged into canonical defect {existing_canonical}",
+            )
+
+    return row_map
+
+
+def _execute_duplicate_merge(
+    conn: sqlite3.Connection,
+    canonical_id: int,
+    source_ids: list[int],
+    actor: str,
+    confidence_score: Optional[float],
+    reason: Optional[str],
+) -> dict:
+    _validate_duplicate_merge_candidates(conn, canonical_id, source_ids)
+    now = datetime.utcnow().isoformat() + "Z"
+
+    conn.execute("BEGIN")
+    conn.execute(
+        f"""
+        UPDATE defects
+        SET status = 'duplicate_merged', canonical_defect_id = ?, updated_at = ?
+        WHERE defect_id IN ({','.join(['?'] * len(source_ids))})
+        """,
+        [canonical_id, now, *source_ids],
+    )
+
+    for source_id in source_ids:
+        conn.execute(
+            """
+            INSERT INTO defect_merge_actions
+            (source_defect_id, canonical_defect_id, confidence_score, reason, approved_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (source_id, canonical_id, confidence_score, reason, actor, now),
+        )
+
+    conn.commit()
+    return {
+        "success": True,
+        "canonical_defect_id": canonical_id,
+        "merged_defect_ids": source_ids,
+        "merged_count": len(source_ids),
+    }
+
+
+def _build_merge_request_key(canonical_id: int, source_ids: list[int]) -> str:
+    all_defect_ids = sorted({int(canonical_id), *[int(source_id) for source_id in source_ids]})
+    return f"defects:{','.join(str(defect_id) for defect_id in all_defect_ids)}"
+
+
+def _build_merge_request_defect_ids(canonical_id: int, source_ids: list[int]) -> list[int]:
+    return sorted({int(canonical_id), *[int(source_id) for source_id in source_ids]})
+
+
+def _serialize_merge_request_row(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    payload = dict(row)
+    source_defect_ids = json.loads(payload.pop("source_defect_ids_json"))
+    payload["source_defect_ids"] = source_defect_ids
+    source_previous_statuses = payload.pop("source_previous_statuses_json", None)
+    payload["source_previous_statuses"] = json.loads(source_previous_statuses) if source_previous_statuses else {}
+
+    all_ids = [payload["canonical_defect_id"], *source_defect_ids]
+    placeholders = ",".join(["?"] * len(all_ids))
+    defect_rows = conn.execute(
+        f"""
+        SELECT defect_id, sprint_id, component, severity, status, assignee, reporter, title, updated_at
+        FROM defects
+        WHERE defect_id IN ({placeholders})
+        """,
+        all_ids,
+    ).fetchall()
+    defect_map = {defect_row["defect_id"]: dict(defect_row) for defect_row in defect_rows}
+
+    payload["canonical_defect"] = defect_map.get(payload["canonical_defect_id"])
+    payload["source_defects"] = [
+        defect_map[source_id]
+        for source_id in source_defect_ids
+        if source_id in defect_map
+    ]
+    return payload
+
+
+@app.post("/api/qa/analysis/duplicates/requests")
+def create_qa_duplicate_merge_request(
+    req: QADuplicateMergeRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in QA_ROLES:
+        raise HTTPException(status_code=403, detail="QA role required")
+
+    canonical_id = req.canonical_defect_id
+    source_ids = sorted({d for d in req.source_defect_ids if d != canonical_id})
+    if not source_ids:
+        raise HTTPException(status_code=400, detail="At least one source defect must be provided")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    row_map = _validate_duplicate_merge_candidates(conn, canonical_id, source_ids)
+    request_key = _build_merge_request_key(canonical_id, source_ids)
+    requested_defect_ids = _build_merge_request_defect_ids(canonical_id, source_ids)
+    source_previous_statuses = {str(source_id): row_map[source_id]["status"] for source_id in source_ids}
+
+    existing_request = conn.execute(
+        """
+        SELECT request_id, requested_by, created_at
+        FROM defect_merge_requests
+        WHERE request_key = ? AND status = 'pending'
+        ORDER BY request_id DESC
+        LIMIT 1
+        """,
+        (request_key,),
+    ).fetchone()
+    if existing_request:
+        conn.close()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A pending merge request already exists "
+                f"(request #{existing_request['request_id']} by {existing_request['requested_by']} on {existing_request['created_at']})"
+            ),
+        )
+
+    pending_requests = conn.execute(
+        """
+        SELECT request_id, canonical_defect_id, source_defect_ids_json, requested_by, created_at
+        FROM defect_merge_requests
+        WHERE status = 'pending'
+        ORDER BY request_id DESC
+        """
+    ).fetchall()
+    for pending_request in pending_requests:
+        pending_defect_ids = _build_merge_request_defect_ids(
+            pending_request["canonical_defect_id"],
+            json.loads(pending_request["source_defect_ids_json"]),
+        )
+        overlapping_defect_ids = sorted(set(requested_defect_ids).intersection(pending_defect_ids))
+        if overlapping_defect_ids:
+            conn.close()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Some defects are already part of a pending merge request "
+                    f"(request #{pending_request['request_id']} by {pending_request['requested_by']} on {pending_request['created_at']}). "
+                    f"Overlapping defect IDs: {', '.join(f'#{defect_id}' for defect_id in overlapping_defect_ids)}"
+                ),
+            )
+
+    actor = _get_qa_actor(authorization, role)
+    now = datetime.utcnow().isoformat() + "Z"
+    conn.execute(
+        """
+        INSERT INTO defect_merge_requests
+        (canonical_defect_id, source_defect_ids_json, source_previous_statuses_json, request_key, confidence_score, reason, requested_by, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        """,
+        (
+            canonical_id,
+            json.dumps(source_ids),
+            json.dumps(source_previous_statuses),
+            request_key,
+            req.confidence_score,
+            req.reason,
+            actor,
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        f"""
+        UPDATE defects
+        SET status = 'duplicate_pending', updated_at = ?
+        WHERE defect_id IN ({','.join(['?'] * len(source_ids))})
+          AND status != 'duplicate_merged'
+        """,
+        [now, *source_ids],
+    )
+    conn.commit()
+    request_row = conn.execute(
+        "SELECT * FROM defect_merge_requests WHERE request_id = last_insert_rowid()"
+    ).fetchone()
+
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor,
+        action="qa_duplicate_merge_requested",
+        entity_id=canonical_id,
+        metadata={
+            "canonical_defect_id": canonical_id,
+            "source_defect_ids": source_ids,
+        },
+    )
+
+    payload = _serialize_merge_request_row(conn, request_row) if request_row else None
+    conn.close()
+    return {"success": True, "request": payload}
+
+
+@app.get("/api/qa/analysis/duplicates/requests")
+def list_qa_duplicate_merge_requests(
+    status: str = "pending",
+    role: str = Depends(get_role),
+):
+    if role not in ("qa_lead", "qa_manager"):
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can review merge requests")
+
+    if status not in ("pending", "approved", "rejected", "all"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    if status == "all":
+        rows = conn.execute(
+            "SELECT * FROM defect_merge_requests ORDER BY created_at DESC, request_id DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM defect_merge_requests WHERE status = ? ORDER BY created_at DESC, request_id DESC",
+            (status,),
+        ).fetchall()
+    results = [_serialize_merge_request_row(conn, row) for row in rows]
+    conn.close()
+    return results
+
+
+@app.post("/api/qa/analysis/duplicates/requests/{request_id}/approve")
+def approve_qa_duplicate_merge_request(
+    request_id: int,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in ("qa_lead", "qa_manager"):
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can approve merge requests")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    req_row = conn.execute(
+        "SELECT * FROM defect_merge_requests WHERE request_id = ?",
+        (request_id,),
+    ).fetchone()
+    if not req_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Merge request not found")
+    if req_row["status"] != "pending":
+        conn.close()
+        raise HTTPException(status_code=409, detail="Merge request is not pending")
+
+    actor = _get_qa_actor(authorization, role)
+    canonical_id = req_row["canonical_defect_id"]
+    source_ids = json.loads(req_row["source_defect_ids_json"])
+
+    result = _execute_duplicate_merge(
+        conn,
+        canonical_id,
+        source_ids,
+        actor,
+        req_row["confidence_score"],
+        req_row["reason"],
+    )
+
+    now = datetime.utcnow().isoformat() + "Z"
+    conn.execute(
+        """
+        UPDATE defect_merge_requests
+        SET status = 'approved', approved_by = ?, approved_at = ?, updated_at = ?
+        WHERE request_id = ?
+        """,
+        (actor, now, now, request_id),
+    )
+    conn.commit()
+    conn.close()
+
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor,
+        action="qa_duplicate_merge_approved",
+        entity_id=canonical_id,
+        metadata={
+            "request_id": request_id,
+            "canonical_defect_id": canonical_id,
+            "source_defect_ids": source_ids,
+        },
+    )
+
+    return {"success": True, "request_id": request_id, "merge": result}
+
+
+@app.post("/api/qa/analysis/duplicates/requests/{request_id}/reject")
+def reject_qa_duplicate_merge_request(
+    request_id: int,
+    req: QADuplicateMergeDecisionRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in ("qa_lead", "qa_manager"):
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can reject merge requests")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    req_row = conn.execute(
+        "SELECT * FROM defect_merge_requests WHERE request_id = ?",
+        (request_id,),
+    ).fetchone()
+    if not req_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Merge request not found")
+    if req_row["status"] != "pending":
+        conn.close()
+        raise HTTPException(status_code=409, detail="Merge request is not pending")
+
+    actor = _get_qa_actor(authorization, role)
+    now = datetime.utcnow().isoformat() + "Z"
+    source_ids = json.loads(req_row["source_defect_ids_json"])
+    source_previous_statuses = json.loads(req_row["source_previous_statuses_json"]) if req_row["source_previous_statuses_json"] else {}
+    conn.execute(
+        """
+        UPDATE defect_merge_requests
+        SET status = 'rejected', approved_by = ?, approved_at = ?, updated_at = ?
+        WHERE request_id = ?
+        """,
+        (actor, now, now, request_id),
+    )
+    if source_ids:
+        for source_id in source_ids:
+            restored_status = source_previous_statuses.get(str(source_id), "open")
+            conn.execute(
+                """
+                UPDATE defects
+                SET status = ?, updated_at = ?
+                WHERE defect_id = ?
+                """,
+                (restored_status, now, source_id),
+            )
+    conn.commit()
+    conn.close()
+
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor,
+        action="qa_duplicate_merge_rejected",
+        entity_id=req_row["canonical_defect_id"],
+        metadata={
+            "request_id": request_id,
+            "canonical_defect_id": req_row["canonical_defect_id"],
+            "source_defect_ids": json.loads(req_row["source_defect_ids_json"]),
+            "reason": req.reason,
+        },
+    )
+
+    return {"success": True, "request_id": request_id}
+
+
+@app.post("/api/qa/analysis/duplicates/merge")
+def merge_qa_duplicates(
+    req: QADuplicateMergeRequest,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default="Bearer token-agent"),
+):
+    if role not in ("qa_lead", "qa_manager"):
+        raise HTTPException(status_code=403, detail="Only QA lead or manager can merge duplicates directly")
+
+    canonical_id = req.canonical_defect_id
+    source_ids = sorted({d for d in req.source_defect_ids if d != canonical_id})
+    if not source_ids:
+        raise HTTPException(status_code=400, detail="At least one source defect must be provided")
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "qa.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_qa_schema(conn)
+
+    actor = _get_qa_actor(authorization, role)
+    result = _execute_duplicate_merge(conn, canonical_id, source_ids, actor, req.confidence_score, req.reason)
+    conn.close()
+
+    from services.audit_logger import log_action
+    log_action(
+        actor=actor,
+        action="qa_duplicates_merged",
+        entity_id=canonical_id,
+        metadata={
+            "canonical_defect_id": canonical_id,
+            "merged_defect_ids": source_ids,
+            "merged_count": len(source_ids),
+            "confidence_score": req.confidence_score,
+        },
+    )
+
+    return result
 
 
 @app.get("/api/qa/reports/export.csv")

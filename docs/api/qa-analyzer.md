@@ -350,7 +350,7 @@ curl -X PATCH http://localhost:8000/api/qa/defects/5/status \
 
 **Description:** Reassign defect to a team member. Only leads and managers can reassign.
 
-**Authentication:** Required (`qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
 
 **Path Parameters:**
 
@@ -408,13 +408,14 @@ curl -X PATCH http://localhost:8000/api/qa/defects/5/assign \
 
 **Description:** Run AI-powered clustering on defect descriptions. Groups similar defect themes to reduce manual review time.
 
-**Authentication:** Required (`qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
 
 **Request Body:**
 
 ```json
 {
-  "sprints": ["S510"]
+  "sprints": ["S510"],
+  "force_refresh": false
 }
 ```
 
@@ -469,7 +470,7 @@ curl -X POST http://localhost:8000/api/qa/analysis/cluster \
 
 **Description:** Run AI-powered duplicate detection. Identifies semantically similar defects and calculates confidence scores with explanation rationales.
 
-**Authentication:** Required (`qa_lead`, `qa_manager`)
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
 
 **Request Body:**
 
@@ -482,6 +483,7 @@ curl -X POST http://localhost:8000/api/qa/analysis/cluster \
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `sprints` | array of strings | No | Sprint IDs; if empty, uses all sprints |
+| `force_refresh` | boolean | No | When `true`, bypasses cached scan results and recomputes |
 
 **Example Request:**
 
@@ -499,6 +501,7 @@ curl -X POST http://localhost:8000/api/qa/analysis/duplicates \
 ```json
 {
   "input_count": 18,
+  "cached": false,
   "groups": [
     {
       "items": [
@@ -544,11 +547,193 @@ curl -X POST http://localhost:8000/api/qa/analysis/duplicates \
 | 0.75–0.89 | Medium | Possible duplicate; review before merge |
 | 0.52–0.74 | Low | Weak signal; manual review needed |
 
+**Grouping Rule:**
+
+- Duplicate groups returned by this endpoint are partitioned by sprint so each group can be submitted directly to merge-request workflows without cross-sprint validation errors.
+
 **Error Cases:**
 
 | Status | Reason |
 |--------|--------|
-| 403 | Only `qa_lead` or `qa_manager` can run analysis |
+| 403 | QA role required |
+
+---
+
+### POST /api/qa/analysis/duplicates/merge
+
+**Description:** Merge duplicate defects into a canonical defect. Source defects are marked `duplicate_merged`, linked with `canonical_defect_id`, and merge actions are audited.
+
+**Authentication:** Required (`qa_lead`, `qa_manager`)
+
+**Request Body:**
+
+```json
+{
+  "canonical_defect_id": 12,
+  "source_defect_ids": [5, 18],
+  "confidence_score": 0.87,
+  "reason": "Repeated checkout issue signals; overlapping terms: checkout, total, change."
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `canonical_defect_id` | integer | Yes | Defect ID to retain as canonical |
+| `source_defect_ids` | array of integers | Yes | Defect IDs to merge into canonical |
+| `confidence_score` | number | No | Detection confidence score for audit context |
+| `reason` | string | No | Merge rationale text for audit context |
+
+**Example Request:**
+
+```bash
+curl -X POST http://localhost:8000/api/qa/analysis/duplicates/merge \
+  -H "Authorization: Bearer token-qa-lead" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "canonical_defect_id": 12,
+    "source_defect_ids": [5, 18],
+    "confidence_score": 0.87,
+    "reason": "Repeated checkout issue signals; overlapping terms: checkout, total, change."
+  }'
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "canonical_defect_id": 12,
+  "merged_defect_ids": [5, 18],
+  "merged_count": 2
+}
+```
+
+**Error Cases:**
+
+| Status | Reason |
+|--------|--------|
+| 400 | No source defects provided or cross-sprint merge attempted |
+| 403 | Only `qa_lead` or `qa_manager` can merge duplicates |
+| 404 | Canonical or source defects not found |
+| 409 | A source defect is already merged into a different canonical defect |
+
+---
+
+### POST /api/qa/analysis/duplicates/requests
+
+**Description:** Submit a duplicate merge request for QA lead/manager approval.
+
+**Authentication:** Required (`qa_engineer`, `qa_lead`, `qa_manager`)
+
+**Request Body:**
+
+```json
+{
+  "canonical_defect_id": 12,
+  "source_defect_ids": [5, 18],
+  "confidence_score": 0.87,
+  "reason": "Repeated checkout issue signals; overlapping terms: checkout, total, change."
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `canonical_defect_id` | integer | Yes | Defect ID to retain as canonical |
+| `source_defect_ids` | array of integers | Yes | Defect IDs to merge into canonical |
+| `confidence_score` | number | No | Detection confidence score for approval context |
+| `reason` | string | No | Merge rationale text |
+
+**Example Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "request": {
+    "request_id": 14,
+    "canonical_defect_id": 12,
+    "source_defect_ids": [5, 18],
+    "confidence_score": 0.87,
+    "reason": "Repeated checkout issue signals; overlapping terms: checkout, total, change.",
+    "requested_by": "quinn",
+    "status": "pending",
+    "approved_by": null,
+    "approved_at": null,
+    "created_at": "2026-05-18T17:00:00.000000Z",
+    "updated_at": "2026-05-18T17:00:00.000000Z"
+  }
+}
+```
+
+---
+
+### GET /api/qa/analysis/duplicates/requests
+
+**Description:** List duplicate merge requests for the lead/manager review queue.
+
+**Authentication:** Required (`qa_lead`, `qa_manager`)
+
+**Query Parameters:**
+
+| Param | Type | Optional | Description |
+|-------|------|----------|-------------|
+| `status` | string | Yes | `pending` (default), `approved`, `rejected`, `all` |
+
+**Example Response (200 OK):**
+
+```json
+[
+  {
+    "request_id": 14,
+    "canonical_defect_id": 12,
+    "source_defect_ids": [5, 18],
+    "confidence_score": 0.87,
+    "reason": "Repeated checkout issue signals; overlapping terms: checkout, total, change.",
+    "requested_by": "quinn",
+    "status": "pending",
+    "approved_by": null,
+    "approved_at": null,
+    "created_at": "2026-05-18T17:00:00.000000Z",
+    "updated_at": "2026-05-18T17:00:00.000000Z"
+  }
+]
+```
+
+---
+
+### POST /api/qa/analysis/duplicates/requests/{request_id}/approve
+
+**Description:** Approve a pending merge request and execute duplicate merge.
+
+**Authentication:** Required (`qa_lead`, `qa_manager`)
+
+**Path Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `request_id` | integer | Merge request ID |
+
+**Example Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "request_id": 14,
+  "merge": {
+    "success": true,
+    "canonical_defect_id": 12,
+    "merged_defect_ids": [5, 18],
+    "merged_count": 2
+  }
+}
+```
+
+**Error Cases:**
+
+| Status | Reason |
+|--------|--------|
+| 403 | Only `qa_lead` or `qa_manager` can approve merge requests |
+| 404 | Merge request not found |
+| 409 | Request is not pending or source defects conflict |
 
 ---
 
