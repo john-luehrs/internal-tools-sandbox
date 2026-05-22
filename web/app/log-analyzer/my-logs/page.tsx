@@ -29,8 +29,9 @@ export default function MyLogsDashboard() {
   const selectedEngineer = (searchParams.get("engineer") || "").toLowerCase();
   const engineer = isManager && TEAM_MEMBERS.includes(selectedEngineer) ? selectedEngineer : username;
   const resolvedToken = token ?? undefined;
+  const canChangeWorkflow = role !== "infrastructure_developer";
 
-  if (!["ops_engineer", "support_manager", "it_admin"].includes(role)) {
+  if (!["ops_engineer", "support_manager", "it_admin", "infrastructure_developer"].includes(role)) {
     return (
       <div className="card">
         <div className="card-header">
@@ -73,6 +74,10 @@ export default function MyLogsDashboard() {
   };
 
   const handleStatusChange = async (status: string) => {
+    if (!canChangeWorkflow) {
+      setStatusError("Infrastructure Developer is read-only in this tool.");
+      return;
+    }
     if (!selectedLog) return;
     setStatusError("");
     try {
@@ -95,6 +100,10 @@ export default function MyLogsDashboard() {
   };
 
   const handleToggleFlag = async (flagged: boolean, reason?: string) => {
+    if (!canChangeWorkflow) {
+      setStatusError("Infrastructure Developer is read-only in this tool.");
+      return;
+    }
     if (!selectedLog) return;
     setStatusError("");
     try {
@@ -195,6 +204,7 @@ export default function MyLogsDashboard() {
           isLoading={explainLoading}
           explanation={explanation || undefined}
           isManager={false}
+          canFlag={canChangeWorkflow}
         />
       )}
     </div>

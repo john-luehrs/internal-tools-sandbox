@@ -1,6 +1,17 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Log } from "@/lib/types";
 
 type Props = {
@@ -14,10 +25,6 @@ const LEVEL_COLORS: Record<string, string> = {
   DEBUG: "#10b981",
 };
 
-const PLOT_LEFT = 2.5;
-const PLOT_RIGHT = 99;
-const PLOT_WIDTH = PLOT_RIGHT - PLOT_LEFT;
-
 const STACK_ORDER = ["DEBUG", "INFO", "WARN", "ERROR"] as const;
 type LevelName = (typeof STACK_ORDER)[number];
 
@@ -25,50 +32,64 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function chooseNiceStepMs(spanMs: number): number {
-  const steps = [
-    5 * 60 * 1000,
-    10 * 60 * 1000,
-    15 * 60 * 1000,
-    30 * 60 * 1000,
-    60 * 60 * 1000,
-    2 * 60 * 60 * 1000,
-    3 * 60 * 60 * 1000,
-    6 * 60 * 60 * 1000,
-    12 * 60 * 60 * 1000,
-    24 * 60 * 60 * 1000,
-    2 * 24 * 60 * 60 * 1000,
-  ];
-  const minTicks = 4;
-  const maxTicks = 9;
-
-  // Prefer a rounded step that yields a readable number of ticks.
-  for (const step of steps) {
-    const tickCount = Math.floor(spanMs / step) + 1;
-    if (tickCount >= minTicks && tickCount <= maxTicks) {
-      return step;
-    }
-  }
-
-  // Fallback: closest to target density when span is unusual.
-  const target = spanMs / 6;
-  let best = steps[0];
-  let bestDist = Math.abs(best - target);
-  for (const step of steps) {
-    const dist = Math.abs(step - target);
-    if (dist < bestDist) {
-      best = step;
-      bestDist = dist;
-    }
-  }
-  return best;
-}
-
 function safeLevel(level: string): LevelName {
   if (level === "ERROR" || level === "WARN" || level === "INFO" || level === "DEBUG") {
     return level;
   }
   return "INFO";
+}
+
+function formatTimelineTick(ts: number, spanMs: number): string {
+  const d = new Date(ts);
+  if (spanMs >= 2 * 24 * 60 * 60 * 1000) {
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  if (spanMs >= 2 * 60 * 60 * 1000) {
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color?: string }>;
+  label?: number;
+}) {
+  if (!active || !payload || payload.length === 0 || typeof label !== "number") {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        background: "#0f172a",
+        border: "1px solid rgba(148, 163, 184, 0.35)",
+        borderRadius: "10px",
+        padding: "10px 12px",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+        minWidth: "170px",
+      }}
+    >
+      <div style={{ color: "#cbd5e1", fontSize: "11px", marginBottom: "6px" }}>
+        {new Date(label).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}
+      </div>
+      {payload.map((item) => (
+        <div key={item.name} style={{ display: "flex", justifyContent: "space-between", gap: "12px", fontSize: "12px" }}>
+          <span style={{ color: item.color || "#e2e8f0" }}>{item.name}</span>
+          <strong style={{ color: "#f8fafc" }}>{Math.round(item.value ?? 0)}</strong>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function ManagerTimelineChart({ logs }: Props) {
@@ -87,33 +108,7 @@ export default function ManagerTimelineChart({ logs }: Props) {
     );
   }, [logs]);
 
-  const points = useMemo(() => {
-    const sorted = sortedLogs;
-
-    if (sorted.length === 0) return [];
-
-    const minTs = new Date(sorted[0].timestamp).getTime();
-    const maxTs = new Date(sorted[sorted.length - 1].timestamp).getTime();
-    const span = Math.max(maxTs - minTs, 1);
-
-    return sorted.map((log) => {
-      const ts = new Date(log.timestamp).getTime();
-      const x = PLOT_LEFT + ((ts - minTs) / span) * PLOT_WIDTH;
-      const y = 100 - clamp(log.anomaly_score, 0, 100);
-      return {
-        id: log.log_id,
-        x,
-        y,
-        level: log.level,
-        anomaly: log.anomaly_score,
-        service: log.service,
-        status: log.status,
-        timestamp: log.timestamp,
-      };
-    });
-  }, [sortedLogs]);
-
-  const buckets = useMemo(() => {
+  const chartData = useMemo(() => {
     if (sortedLogs.length === 0) return [];
 
     const minTs = new Date(sortedLogs[0].timestamp).getTime();
@@ -144,90 +139,32 @@ export default function ManagerTimelineChart({ logs }: Props) {
     }
 
     return tmp.map((b, i) => {
-      const x =
-        bucketCount === 1
-          ? PLOT_LEFT + PLOT_WIDTH / 2
-          : PLOT_LEFT + (i / (bucketCount - 1)) * PLOT_WIDTH;
       const ts = Number.isFinite(b.tsMin) ? b.tsMin : minTs + (span * i) / Math.max(bucketCount - 1, 1);
       return {
-        x,
         ts,
+        label: formatTimelineTick(ts, span),
         total: b.total,
-        avgAnomaly: b.total > 0 ? b.anomalySum / b.total : 0,
-        levels: b.levels,
+        avgAnomaly: b.total > 0 ? Math.round((b.anomalySum / b.total) * 10) / 10 : 0,
+        ERROR: b.levels.ERROR,
+        WARN: b.levels.WARN,
+        INFO: b.levels.INFO,
+        DEBUG: b.levels.DEBUG,
       };
     });
   }, [sortedLogs]);
 
-  const stackedAreas = useMemo(() => {
-    if (buckets.length === 0) return [];
-    const maxTotal = Math.max(1, ...buckets.map((b) => b.total));
-    const areas: Array<{ level: LevelName; polygon: string }> = [];
-
-    let lower = buckets.map(() => 0);
-    for (const level of STACK_ORDER) {
-      const upper = buckets.map((b, i) => lower[i] + b.levels[level]);
-      const top = buckets.map((b, i) => {
-        const y = 100 - (upper[i] / maxTotal) * 100;
-        return `${b.x},${y}`;
-      });
-      const bottom = buckets
-        .map((b, i) => {
-          const y = 100 - (lower[i] / maxTotal) * 100;
-          return `${b.x},${y}`;
-        })
-        .reverse();
-
-      areas.push({ level, polygon: [...top, ...bottom].join(" ") });
-      lower = upper;
-    }
-
-    return areas;
-  }, [buckets]);
-
   const maxTotalPerBucket = useMemo(() => {
-    if (buckets.length === 0) return 1;
-    return Math.max(1, ...buckets.map((b) => b.total));
-  }, [buckets]);
-
-  const bucketAvgLine = useMemo(
-    () => buckets.map((b) => `${b.x},${100 - clamp(b.avgAnomaly, 0, 100)}`).join(" "),
-    [buckets]
-  );
+    if (chartData.length === 0) return 1;
+    return Math.max(1, ...chartData.map((b) => b.total));
+  }, [chartData]);
 
   const maxLevelCount = useMemo(() => {
-    if (buckets.length === 0) return 1;
+    if (chartData.length === 0) return 1;
     return Math.max(
       1,
-      ...buckets.flatMap((b) => [b.levels.ERROR, b.levels.WARN, b.levels.INFO, b.levels.DEBUG])
+      ...chartData.flatMap((b) => [b.ERROR, b.WARN, b.INFO, b.DEBUG])
     );
-  }, [buckets]);
-
-  const levelLinePoints = useMemo(() => {
-    const build = (level: LevelName) =>
-      buckets
-        .map((b) => {
-          const y = 100 - (b.levels[level] / maxLevelCount) * 100;
-          return `${b.x},${y}`;
-        })
-        .join(" ");
-
-    return {
-      ERROR: build("ERROR"),
-      WARN: build("WARN"),
-      INFO: build("INFO"),
-      DEBUG: build("DEBUG"),
-    };
-  }, [buckets, maxLevelCount]);
-
-  const yAxisTicks = useMemo(() => {
-    const maxValue = viewMode === "stacked" ? maxTotalPerBucket : maxLevelCount;
-    const fractions = [1, 0.75, 0.5, 0.25, 0];
-    return fractions.map((fraction) => ({
-      y: 100 - fraction * 100,
-      label: String(Math.round(maxValue * fraction)),
-    }));
-  }, [viewMode, maxTotalPerBucket, maxLevelCount]);
+  }, [chartData]);
 
   const stats = useMemo(() => {
     const byLevel = { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
@@ -243,66 +180,9 @@ export default function ManagerTimelineChart({ logs }: Props) {
     return { byLevel, avgAnomaly };
   }, [logs]);
 
-  const firstTs = points[0]?.timestamp || (buckets[0] ? new Date(buckets[0].ts).toISOString() : undefined);
-  const lastTs =
-    points[points.length - 1]?.timestamp ||
-    (buckets[buckets.length - 1] ? new Date(buckets[buckets.length - 1].ts).toISOString() : undefined);
-
-  const timelineTicks = useMemo(() => {
-    if (!firstTs || !lastTs) return [];
-
-    const start = new Date(firstTs).getTime();
-    const end = new Date(lastTs).getTime();
-    const span = Math.max(end - start, 1);
-    const stepMs = chooseNiceStepMs(span);
-
-    const ticks: Array<{ key: number; x: number; label: string }> = [];
-    const firstTick = Math.ceil(start / stepMs) * stepMs;
-    const lastTick = Math.floor(end / stepMs) * stepMs;
-
-    for (let ts = firstTick; ts <= lastTick; ts += stepMs) {
-      const x = PLOT_LEFT + ((ts - start) / span) * PLOT_WIDTH;
-      const d = new Date(ts);
-      const label =
-        stepMs >= 24 * 60 * 60 * 1000
-          ? d.toLocaleDateString([], { month: "short", day: "numeric" })
-          : stepMs >= 60 * 60 * 1000
-            ? d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-            : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      ticks.push({ key: ts, x, label });
-    }
-
-    // Always include visible boundary anchors for context.
-    ticks.unshift({
-      key: start,
-      x: PLOT_LEFT,
-      label: new Date(start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-    });
-    ticks.push({
-      key: end,
-      x: PLOT_RIGHT,
-      label: new Date(end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-    });
-
-    // Deduplicate overlapping keys from inserted boundaries/interior ticks.
-    const unique = Array.from(new Map(ticks.map((t) => [t.key, t])).values());
-
-    // Fallback for very narrow ranges where no rounded interior ticks exist.
-    if (unique.length === 0) {
-      return [
-        { key: start, x: PLOT_LEFT, label: new Date(start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) },
-        { key: end, x: PLOT_RIGHT, label: new Date(end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) },
-      ];
-    }
-
-    return unique.sort((a, b) => a.x - b.x);
-  }, [firstTs, lastTs]);
-
-  const timelineLabelStep = useMemo(() => {
-    if (timelineTicks.length <= 6) return 1;
-    if (timelineTicks.length <= 10) return 2;
-    return 3;
-  }, [timelineTicks.length]);
+  const firstTs = chartData[0]?.ts;
+  const lastTs = chartData[chartData.length - 1]?.ts;
+  const spanMs = firstTs && lastTs ? Math.max(lastTs - firstTs, 1) : 1;
 
   return (
     <div className="card" style={{ marginTop: "20px", marginBottom: "20px", paddingBottom: collapsed ? "14px" : "20px" }}>
@@ -327,14 +207,12 @@ export default function ManagerTimelineChart({ logs }: Props) {
         </button>
       </div>
 
-      {!collapsed && (points.length === 0 ? (
+      {!collapsed && (chartData.length === 0 ? (
         <p style={{ color: "var(--muted)", fontSize: "13px", margin: 0 }}>
           No logs for current filters.
         </p>
       ) : (
         <>
-
-          
           <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
             <button
               type="button"
@@ -381,59 +259,91 @@ export default function ManagerTimelineChart({ logs }: Props) {
             <MiniStat label="Info+Debug" value={String(stats.byLevel.INFO + stats.byLevel.DEBUG)} color={LEVEL_COLORS.INFO} />
           </div>
 
-          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "10px", background: "var(--bg)" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "26px 1fr", columnGap: "1px", alignItems: "start" }}>
-              <div style={{ position: "relative", height: "260px" }}>
-                {yAxisTicks.map((tick) => {
-                  const y = tick.y < 2 ? 2 : tick.y > 98 ? 98 : tick.y;
-                  return (
-                    <div
-                      key={`y-gutter-${tick.y}`}
-                      style={{
-                        position: "absolute",
-                        top: `${y}%`,
-                        right: "0",
-                        transform: "translateY(-50%)",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "2px",
-                      }}
-                    >
-                      <span style={{ fontSize: "11px", color: "var(--muted)", fontWeight: 600, fontFamily: "Segoe UI, Arial, sans-serif" }}>
-                        {tick.label}
-                      </span>
-                      <span style={{ width: "4px", height: "1px", background: "var(--border)", opacity: 0.8 }} />
-                    </div>
-                  );
-                })}
-              </div>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "12px", background: "var(--bg)" }}>
+            <div style={{ width: "100%", height: "286px" }}>
+              <ResponsiveContainer>
+                <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 6 }}>
+                  <defs>
+                    <linearGradient id="area-error" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={LEVEL_COLORS.ERROR} stopOpacity={0.42} />
+                      <stop offset="95%" stopColor={LEVEL_COLORS.ERROR} stopOpacity={0.07} />
+                    </linearGradient>
+                    <linearGradient id="area-warn" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={LEVEL_COLORS.WARN} stopOpacity={0.38} />
+                      <stop offset="95%" stopColor={LEVEL_COLORS.WARN} stopOpacity={0.06} />
+                    </linearGradient>
+                    <linearGradient id="area-info" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={LEVEL_COLORS.INFO} stopOpacity={0.34} />
+                      <stop offset="95%" stopColor={LEVEL_COLORS.INFO} stopOpacity={0.06} />
+                    </linearGradient>
+                    <linearGradient id="area-debug" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={LEVEL_COLORS.DEBUG} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={LEVEL_COLORS.DEBUG} stopOpacity={0.05} />
+                    </linearGradient>
+                  </defs>
 
-              <div>
-                <svg viewBox="0 0 100 100" width="100%" height="260" preserveAspectRatio="none" role="img" aria-label="Timeline chart of anomaly and volume by log level">
-                  <line x1={PLOT_LEFT} y1="100" x2={PLOT_RIGHT} y2="100" stroke="var(--border)" strokeWidth="0.4" />
-                  <line x1={PLOT_LEFT} y1="75" x2={PLOT_RIGHT} y2="75" stroke="var(--border)" strokeWidth="0.2" />
-                  <line x1={PLOT_LEFT} y1="50" x2={PLOT_RIGHT} y2="50" stroke="var(--border)" strokeWidth="0.2" />
-                  <line x1={PLOT_LEFT} y1="25" x2={PLOT_RIGHT} y2="25" stroke="var(--border)" strokeWidth="0.2" />
-
-                  {viewMode === "stacked" &&
-                    stackedAreas.map((area) => (
-                      <polygon
-                        key={area.level}
-                        points={area.polygon}
-                        fill={LEVEL_COLORS[area.level]}
-                        fillOpacity="0.32"
-                        stroke={LEVEL_COLORS[area.level]}
-                        strokeWidth="0.15"
-                      />
-                    ))}
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="2 6" vertical={false} opacity={0.7} />
+                  <XAxis
+                    dataKey="ts"
+                    type="number"
+                    scale="time"
+                    domain={["dataMin", "dataMax"]}
+                    tickLine={false}
+                    axisLine={{ stroke: "var(--border)" }}
+                    tick={{ fill: "var(--muted)", fontSize: 10 }}
+                    tickFormatter={(value) => formatTimelineTick(Number(value), spanMs)}
+                    minTickGap={22}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    allowDecimals={false}
+                    tickLine={false}
+                    axisLine={{ stroke: "var(--border)" }}
+                    tick={{ fill: "var(--muted)", fontSize: 10 }}
+                    domain={
+                      viewMode === "stacked"
+                        ? [0, Math.max(1, Math.ceil(maxTotalPerBucket * 1.15))]
+                        : [0, Math.max(1, Math.ceil(maxLevelCount * 1.2))]
+                    }
+                  />
+                  {viewMode === "stacked" && (
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tickLine={false}
+                      axisLine={{ stroke: "var(--border)" }}
+                      tick={{ fill: "var(--muted)", fontSize: 10 }}
+                    />
+                  )}
+                  {viewMode === "stacked" && (
+                    <ReferenceLine
+                      yAxisId="right"
+                      y={75}
+                      stroke="#f59e0b"
+                      strokeDasharray="4 4"
+                      strokeOpacity={0.75}
+                    />
+                  )}
+                  <Tooltip content={<ChartTooltip />} />
 
                   {viewMode === "stacked" && (
-                    <polyline
-                      fill="none"
-                      stroke="#93c5fd"
-                      strokeWidth="0.55"
-                      points={bucketAvgLine}
-                    />
+                    <>
+                      <Area dataKey="DEBUG" yAxisId="left" type="monotone" stackId="levels" stroke={LEVEL_COLORS.DEBUG} fill="url(#area-debug)" strokeWidth={1.2} />
+                      <Area dataKey="INFO" yAxisId="left" type="monotone" stackId="levels" stroke={LEVEL_COLORS.INFO} fill="url(#area-info)" strokeWidth={1.2} />
+                      <Area dataKey="WARN" yAxisId="left" type="monotone" stackId="levels" stroke={LEVEL_COLORS.WARN} fill="url(#area-warn)" strokeWidth={1.2} />
+                      <Area dataKey="ERROR" yAxisId="left" type="monotone" stackId="levels" stroke={LEVEL_COLORS.ERROR} fill="url(#area-error)" strokeWidth={1.2} />
+                      <Line
+                        dataKey="avgAnomaly"
+                        yAxisId="right"
+                        type="monotone"
+                        stroke="#93c5fd"
+                        strokeWidth={2.3}
+                        dot={false}
+                        name="Avg anomaly"
+                        activeDot={{ r: 4, fill: "#93c5fd", stroke: "#0b1220", strokeWidth: 1.5 }}
+                      />
+                    </>
                   )}
 
                   {viewMode === "line" && (
@@ -441,48 +351,21 @@ export default function ManagerTimelineChart({ logs }: Props) {
                       {(["ERROR", "WARN", "INFO", "DEBUG"] as LevelName[])
                         .filter((level) => visibleLevels[level])
                         .map((level) => (
-                          <polyline
+                          <Line
                             key={level}
-                            fill="none"
+                            dataKey={level}
+                            yAxisId="left"
+                            type="monotone"
                             stroke={LEVEL_COLORS[level]}
-                            strokeWidth="0.9"
-                            points={levelLinePoints[level]}
+                            strokeWidth={2}
+                            dot={false}
+                            activeDot={{ r: 3.5, fill: LEVEL_COLORS[level], stroke: "#0b1220", strokeWidth: 1.2 }}
                           />
                         ))}
                     </>
                   )}
-                </svg>
-
-                <div style={{ marginTop: "8px" }}>
-                  <div style={{ position: "relative", height: "26px" }}>
-                    {timelineTicks.map((tick, index) => {
-                      const isFirst = index === 0;
-                      const isLast = index === timelineTicks.length - 1;
-                      const showLabel = isFirst || isLast || index % timelineLabelStep === 0;
-
-                      return (
-                        <div
-                          key={tick.key}
-                          style={{
-                            position: "absolute",
-                            left: `${tick.x}%`,
-                            transform: isFirst ? "translateX(0)" : isLast ? "translateX(-100%)" : "translateX(-50%)",
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: isFirst ? "flex-start" : isLast ? "flex-end" : "center",
-                            gap: "3px",
-                          }}
-                        >
-                          <span style={{ width: "1px", height: "6px", background: "var(--border)", opacity: 0.8 }} />
-                          {showLabel && (
-                            <span style={{ fontSize: "10px", color: "var(--muted)", whiteSpace: "nowrap" }}>{tick.label}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+                </ComposedChart>
+              </ResponsiveContainer>
             </div>
 
             <div style={{ display: "flex", gap: "14px", marginTop: "8px", flexWrap: "wrap", fontSize: "11px", color: "var(--muted)" }}>
@@ -491,6 +374,7 @@ export default function ManagerTimelineChart({ logs }: Props) {
               <Legend color={LEVEL_COLORS.INFO} label="INFO" />
               <Legend color={LEVEL_COLORS.DEBUG} label="DEBUG" />
               {viewMode === "stacked" && <Legend color="#93c5fd" label="Avg anomaly per time bucket" />}
+              {viewMode === "stacked" && <Legend color="#f59e0b" label="Anomaly threshold (75)" />}
               <span>
                 {viewMode === "stacked"
                   ? "Y-axis: stacked log volume by level"

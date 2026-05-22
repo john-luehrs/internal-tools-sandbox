@@ -27,6 +27,7 @@ import {
   QASprint,
 } from "@/lib/types";
 import { useRoleContext } from "@/lib/RoleContext";
+import { QA_SIDEBAR_CONTEXT_EVENT } from "@/lib/events";
 
 const QA_ROLES = new Set(["qa_engineer", "qa_lead", "qa_manager"]);
 const QA_ANALYSIS_ROLES = new Set(["qa_lead", "qa_manager"]);
@@ -296,6 +297,24 @@ export default function QASprintPage() {
     return defects.filter((defect) => idSet.has(defect.defect_id));
   }, [defects, duplicateFocusDefectIds]);
 
+  const workflowStatusKpis = useMemo(() => {
+    const totals = {
+      open: 0,
+      investigating: 0,
+      duplicate_pending: 0,
+      resolved: 0,
+    };
+
+    for (const defect of visibleDefects) {
+      if (defect.status === "open") totals.open += 1;
+      if (defect.status === "investigating") totals.investigating += 1;
+      if (defect.status === "duplicate_pending") totals.duplicate_pending += 1;
+      if (defect.status === "resolved") totals.resolved += 1;
+    }
+
+    return totals;
+  }, [visibleDefects]);
+
   const componentHeatmapRows = useMemo(() => {
     const map = new Map<string, Record<string, number>>();
 
@@ -341,11 +360,13 @@ export default function QASprintPage() {
   );
 
   const maxPerSeverity = useMemo(() => {
-    const m: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    const max: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const row of componentHeatmapRows) {
-      for (const s of SEVERITY_ORDER) m[s] = Math.max(m[s], row.counts[s]);
+      for (const severity of SEVERITY_ORDER) {
+        max[severity] = Math.max(max[severity], row.counts[severity]);
+      }
     }
-    return m;
+    return max;
   }, [componentHeatmapRows]);
 
   const applyHeatmapFilters = (component?: string, severity?: string) => {
@@ -365,6 +386,27 @@ export default function QASprintPage() {
     setFilters((prev) => ({ ...prev, component: "", severity: "" }));
     setHeatmapBridgeLabel("");
   };
+
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent(QA_SIDEBAR_CONTEXT_EVENT, {
+        detail: {
+          sprintMeta: selectedSprintMeta
+            ? {
+                sprint_id: selectedSprintMeta.sprint_id,
+                release_label: selectedSprintMeta.release_label,
+                start_date: selectedSprintMeta.start_date,
+                end_date: selectedSprintMeta.end_date,
+                modules_deployed: selectedSprintMeta.modules_deployed,
+                deploy_success_count: selectedSprintMeta.deploy_success_count,
+                deploy_error_count: selectedSprintMeta.deploy_error_count,
+              }
+            : null,
+          heatmapRows: componentHeatmapRows,
+        },
+      })
+    );
+  }, [selectedSprintMeta, componentHeatmapRows]);
 
   const exportCsv = async () => {
     try {
@@ -688,14 +730,14 @@ export default function QASprintPage() {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", alignItems: "stretch" }}>
-        <div className="card" style={{ minHeight: 280, height: "100%" }}>
+      <div className="qa-top-two-card-grid">
+        <div className="card qa-sprint-selection-card" style={{ minHeight: 280, height: "100%" }}>
           <div className="card-header">
             <h2 className="card-title">QA Defect Pattern Analyzer</h2>
           </div>
 
           <div className="filters">
-            <div className="filter-group" style={{ minWidth: 160 }}>
+            <div className="filter-group qa-sprint-filter-group">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <label className="filter-label">Sprints</label>
                 {filters.sprints.length > 0 && (
@@ -716,7 +758,7 @@ export default function QASprintPage() {
                   const selectedValues = Array.from(e.target.selectedOptions).map((opt) => opt.value);
                   setFilters((prev) => ({ ...prev, sprints: selectedValues }));
                 }}
-                style={{ minHeight: 92 }}
+                style={{ minHeight: 132 }}
               >
                 {sprints.map((s) => (
                   <option key={s.sprint_id} value={s.sprint_id}>
@@ -776,7 +818,7 @@ export default function QASprintPage() {
           </div>
         </div>
 
-        <section className="card" style={{ padding: 14, minHeight: 280, height: "100%" }}>
+        <section className="card" style={{ padding: 14, minHeight: 320, height: "100%" }}>
           <h3 className="card-title" style={{ marginTop: 0, marginBottom: 4 }}>Component Heatmap</h3>
           <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 12 }}>
             Click a cell to filter by component + severity, or a label to filter by component only.
@@ -784,9 +826,9 @@ export default function QASprintPage() {
           {componentHeatmapRows.length ? (
             <div style={{ display: "grid", gridTemplateColumns: "max-content repeat(4, 44px)", gap: "4px 6px", width: "fit-content" }}>
               <span />
-              {(["critical", "high", "medium", "low"] as const).map((s) => (
-                <span key={s} style={{ fontSize: 11, textAlign: "center", color: "var(--muted)", textTransform: "capitalize", paddingBottom: 4 }}>
-                  {s}
+              {(["critical", "high", "medium", "low"] as const).map((severity) => (
+                <span key={severity} style={{ fontSize: 11, textAlign: "center", color: "var(--muted)", textTransform: "capitalize", paddingBottom: 4 }}>
+                  {severity}
                 </span>
               ))}
               {componentHeatmapRows.map((row) => (
@@ -799,17 +841,17 @@ export default function QASprintPage() {
                   >
                     {row.component}
                   </button>
-                  {(["critical", "high", "medium", "low"] as const).map((s) => {
-                    const count = row.counts[s];
-                    const max = maxPerSeverity[s];
+                  {(["critical", "high", "medium", "low"] as const).map((severity) => {
+                    const count = row.counts[severity];
+                    const max = maxPerSeverity[severity];
                     const intensity = max > 0 ? 0.12 + 0.88 * (count / max) : 0;
-                    const color = s === "critical" ? `rgba(220,38,38,${intensity})` : s === "high" ? `rgba(234,88,12,${intensity})` : s === "medium" ? `rgba(202,138,4,${intensity})` : `rgba(22,163,74,${intensity})`;
+                    const color = severity === "critical" ? `rgba(220,38,38,${intensity})` : severity === "high" ? `rgba(234,88,12,${intensity})` : severity === "medium" ? `rgba(202,138,4,${intensity})` : `rgba(22,163,74,${intensity})`;
                     return (
                       <button
-                        key={s}
+                        key={severity}
                         type="button"
-                        onClick={() => count > 0 ? applyHeatmapFilters(row.component, s) : undefined}
-                        title={count > 0 ? `${row.component} / ${s}: ${count} defects` : undefined}
+                        onClick={() => count > 0 ? applyHeatmapFilters(row.component, severity) : undefined}
+                        title={count > 0 ? `${row.component} / ${severity}: ${count} defects` : undefined}
                         style={{
                           background: count > 0 ? color : "rgba(148,163,184,0.06)",
                           border: "1px solid rgba(148,163,184,0.12)",
@@ -831,119 +873,6 @@ export default function QASprintPage() {
           ) : (
             <p style={{ margin: 0, color: "var(--muted)" }}>No heatmap data for the current sprint selection.</p>
           )}
-        </section>
-
-        <section className="card" style={{ padding: 14, minHeight: 180, height: "100%" }}>
-          {selectedSprintMeta ? (
-            <div style={{ display: "grid", gap: 12, height: "100%" }}>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-                <div>
-                  <h3 className="card-title" style={{ marginTop: 0, marginBottom: 4 }}>
-                    Sprint {selectedSprintMeta.sprint_id}
-                  </h3>
-                  <p style={{ margin: 0, color: "var(--muted)", fontSize: 12 }}>
-                    {selectedSprintMeta.release_label}
-                  </p>
-                </div>
-                <div style={{ padding: "4px 8px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--muted)", fontSize: 11, whiteSpace: "nowrap" }}>
-                  Active sprint
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Release</div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{selectedSprintMeta.release_label}</div>
-                </div>
-
-                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Date range</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>{selectedSprintMeta.start_date} → {selectedSprintMeta.end_date}</div>
-                </div>
-
-                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Deployment health</div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{selectedSprintMeta.deploy_success_count ?? 0}</span>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>ok</span>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>/</span>
-                    <span style={{ fontSize: 13, color: "var(--muted)" }}>{selectedSprintMeta.deploy_error_count ?? 0} errors</span>
-                  </div>
-                </div>
-
-                <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.04)" }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Modules</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1 }}>
-                    {(selectedSprintMeta.modules_deployed || "not specified")
-                      .split(",")
-                      .map((moduleName) => moduleName.trim())
-                      .filter(Boolean).length}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>deployed</div>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                  <span style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.6 }}>Modules deployed</span>
-                  <span style={{ fontSize: 11, color: "var(--muted)" }}>{selectedSprintMeta.modules_deployed ? "Listed below" : "Not specified"}</span>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {(selectedSprintMeta.modules_deployed || "not specified").split(",").map((moduleName) => (
-                    <span
-                      key={moduleName.trim()}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        background: "rgba(148, 163, 184, 0.10)",
-                        border: "1px solid rgba(148, 163, 184, 0.14)",
-                        color: "var(--text)",
-                        fontSize: 11,
-                        lineHeight: 1.2,
-                      }}
-                    >
-                      {moduleName.trim()}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", placeItems: "center", height: "100%", minHeight: 120, textAlign: "center", color: "var(--muted)", fontSize: 12 }}>
-              Select a sprint to see its deployment summary.
-            </div>
-          )}
-        </section>
-
-        <section className="card" style={{ padding: 14, minHeight: 180, height: "100%" }}>
-          <h3 className="card-title" style={{ marginTop: 0, marginBottom: 4 }}>Severity Distribution</h3>
-          <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: 12 }}>Click a label to filter by severity.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {severityDistribution.map((item) => {
-              const dotColor = item.severity === "critical" ? "#dc2626" : item.severity === "high" ? "#ea580c" : item.severity === "medium" ? "#ca8a04" : "#16a34a";
-              const pct = maxSeverityCount > 0 ? Math.max(0, (item.count / maxSeverityCount) * 100) : 0;
-              return (
-                <button
-                  key={item.severity}
-                  type="button"
-                  onClick={() => applyHeatmapFilters("", item.severity)}
-                  title={`Filter defects by ${item.severity} severity`}
-                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left", color: "var(--text)" }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
-                    <span style={{ fontSize: 13, textTransform: "capitalize" }}>{item.severity}</span>
-                    <span style={{ fontSize: 12, color: "var(--muted)", marginLeft: "auto" }}>{item.count}</span>
-                  </div>
-                  <div style={{ background: "rgba(148,163,184,0.15)", borderRadius: 6, overflow: "hidden", height: 6 }}>
-                    <div style={{ width: `${pct}%`, height: "100%", background: dotColor, borderRadius: 6, transition: "width 0.3s" }} />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         </section>
       </div>
 
@@ -1360,6 +1289,32 @@ export default function QASprintPage() {
         {loading ? <p>Loading QA defects...</p> : null}
         {error ? <p style={{ color: "#ef4444" }}>{error}</p> : null}
         {message ? <p style={{ color: "#22c55e" }}>{message}</p> : null}
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: 8,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.06)" }}>
+            <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)" }}>Open</p>
+            <p style={{ margin: "4px 0 0", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{workflowStatusKpis.open}</p>
+          </div>
+          <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.06)" }}>
+            <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)" }}>Investigating</p>
+            <p style={{ margin: "4px 0 0", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{workflowStatusKpis.investigating}</p>
+          </div>
+          <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.06)" }}>
+            <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)" }}>Duplicate Pending</p>
+            <p style={{ margin: "4px 0 0", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{workflowStatusKpis.duplicate_pending}</p>
+          </div>
+          <div style={{ padding: 10, border: "1px solid var(--border)", borderRadius: 10, background: "rgba(148, 163, 184, 0.06)" }}>
+            <p style={{ margin: 0, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)" }}>Resolved</p>
+            <p style={{ margin: "4px 0 0", fontSize: 18, fontWeight: 700, lineHeight: 1 }}>{workflowStatusKpis.resolved}</p>
+          </div>
+        </div>
 
         <div className="table-container">
           <table className="log-table">

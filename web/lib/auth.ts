@@ -5,9 +5,25 @@ export const ROLES = {
   qa_engineer: { label: "QA Engineer" },
   qa_lead: { label: "QA Lead" },
   qa_manager: { label: "QA Manager" },
+  infrastructure_developer: { label: "Infrastructure Developer" },
 } as const;
 
 export type Role = keyof typeof ROLES;
+
+export const TOOLS = {
+  "log-analyzer": {
+    label: "Log Analyzer",
+    path: "/log-analyzer/team",
+    allowedRoles: ["ops_engineer", "support_manager", "it_admin", "infrastructure_developer"] as Role[],
+  },
+  "qa-analyzer": {
+    label: "QA Analyzer",
+    path: "/qa-analyzer/sprint",
+    allowedRoles: ["qa_engineer", "qa_lead", "qa_manager", "infrastructure_developer"] as Role[],
+  },
+} as const;
+
+export type ToolKey = keyof typeof TOOLS;
 
 export const PERSONAS = {
   alice: {
@@ -42,7 +58,14 @@ export const PERSONAS = {
     name: "Evan",
     role: "it_admin" as Role,
     token: "Bearer token-it",
-    highlights: ["All manager features", "SLA breach flags & service breakdown", "Re-assign logs & AI audit log"],
+    highlights: [
+      "Full team queue with assignee names",
+      "Workload distribution per engineer",
+      "AI-generated manager ops brief",
+      "Service-level SLA breach data",
+      "Re-assign any log",
+      "AI audit log",
+    ],
     restricted: [],
   },
   quinn: {
@@ -73,6 +96,13 @@ export const PERSONAS = {
     highlights: ["Cross-sprint trend analysis", "Full QA triage controls", "CSV report export"],
     restricted: [],
   },
+  avery: {
+    name: "Avery",
+    role: "infrastructure_developer" as Role,
+    token: "Bearer token-infra",
+    highlights: ["Access Log Analyzer and QA Analyzer", "Review anomalies and defect trends", "Use read-only cross-tool dashboards"],
+    restricted: ["Assign, flag, or resolve incidents", "Submit or approve QA merge workflows", "Change ownership or workflow states"],
+  },
 };
 
 export type PersonaKey = keyof typeof PERSONAS;
@@ -81,6 +111,22 @@ export const AUTH_STORAGE_KEY = "sandbox_auth_persona";
 
 export function isManagerRole(role: Role): boolean {
   return role === "support_manager" || role === "it_admin";
+}
+
+export function roleCanAccessTool(role: Role, tool: ToolKey): boolean {
+  return TOOLS[tool].allowedRoles.includes(role);
+}
+
+export function getToolFromPath(pathname: string | null): ToolKey | null {
+  if (!pathname) return null;
+  if (pathname.startsWith("/log-analyzer")) return "log-analyzer";
+  if (pathname.startsWith("/qa-analyzer")) return "qa-analyzer";
+  return null;
+}
+
+export function getPersonasForTool(tool: ToolKey): PersonaKey[] {
+  const keys = Object.keys(PERSONAS) as PersonaKey[];
+  return keys.filter((personaKey) => roleCanAccessTool(PERSONAS[personaKey].role, tool));
 }
 
 export function getStoredPersona(): PersonaKey | null {
