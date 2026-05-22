@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { TOOLS } from "@/lib/auth";
 
+const TOOL_DESCRIPTIONS: Record<keyof typeof TOOLS, string> = {
+  "support-triage": "Ticket triage, risk-aware customer context, and safe AI summaries.",
+  "log-analyzer": "Operational monitoring, assignment, and response workflows.",
+  "qa-analyzer": "Defect triage, trend analysis, and duplicate-merge workflows.",
+};
+
 export default function Home() {
   return (
     <div className="login-screen" style={{ minHeight: "100vh" }}>
@@ -16,9 +22,7 @@ export default function Home() {
             <Link key={toolKey} href={TOOLS[toolKey].path} className="persona-card" style={{ textDecoration: "none" }}>
               <p className="persona-card-name">{TOOLS[toolKey].label}</p>
               <p className="login-subtitle" style={{ margin: "0 0 10px" }}>
-                {toolKey === "log-analyzer"
-                  ? "Operational monitoring, assignment, and response workflows."
-                  : "Defect triage, trend analysis, and duplicate-merge workflows."}
+                {TOOL_DESCRIPTIONS[toolKey]}
               </p>
               <div className="role-badge" style={{ width: "fit-content" }}>
                 Open Tool

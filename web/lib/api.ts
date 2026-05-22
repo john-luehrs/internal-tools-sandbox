@@ -2,6 +2,10 @@ import {
   Log,
   LogStats,
   ExplanationResponse,
+  SupportTicket,
+  SupportSummaryResponse,
+  SupportEscalationRequest,
+  SupportSLAStateRequest,
   QASprint,
   QAHeatmapPoint,
   QADefect,
@@ -46,6 +50,56 @@ async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promis
   }
 
   return response.json();
+}
+
+// Support API
+export async function getSupportTickets(token?: string): Promise<SupportTicket[]> {
+  return apiFetch<SupportTicket[]>("/tickets", { token });
+}
+
+export async function getSupportTicket(ticketId: number, token?: string): Promise<SupportTicket> {
+  return apiFetch<SupportTicket>(`/tickets/${ticketId}`, { token });
+}
+
+export async function summarizeSupportTicket(
+  text: string,
+  context: string,
+  safeMode: boolean,
+  token?: string
+): Promise<SupportSummaryResponse> {
+  return apiFetch<SupportSummaryResponse>("/ai/summarize", {
+    token,
+    method: "POST",
+    body: {
+      text,
+      context,
+      safe_mode: safeMode,
+    },
+  });
+}
+
+export async function updateSupportTicketEscalation(
+  ticketId: number,
+  payload: SupportEscalationRequest,
+  token?: string
+): Promise<{ success: boolean; ticket: SupportTicket | null }> {
+  return apiFetch<{ success: boolean; ticket: SupportTicket | null }>(`/tickets/${ticketId}/escalate`, {
+    token,
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export async function updateSupportTicketSLAState(
+  ticketId: number,
+  payload: SupportSLAStateRequest,
+  token?: string
+): Promise<{ success: boolean; ticket: SupportTicket | null }> {
+  return apiFetch<{ success: boolean; ticket: SupportTicket | null }>(`/tickets/${ticketId}/sla-state`, {
+    token,
+    method: "PATCH",
+    body: payload,
+  });
 }
 
 // Logs API

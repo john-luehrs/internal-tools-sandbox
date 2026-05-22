@@ -1,4 +1,5 @@
 export const ROLES = {
+  support_agent: { label: "Support Agent" },
   ops_engineer: { label: "Ops Engineer" },
   support_manager: { label: "Support Manager" },
   it_admin: { label: "IT Admin" },
@@ -11,6 +12,11 @@ export const ROLES = {
 export type Role = keyof typeof ROLES;
 
 export const TOOLS = {
+  "support-triage": {
+    label: "Support Triage",
+    path: "/support-triage/tickets",
+    allowedRoles: ["support_agent", "support_manager"] as Role[],
+  },
   "log-analyzer": {
     label: "Log Analyzer",
     path: "/log-analyzer/team",
@@ -26,6 +32,13 @@ export const TOOLS = {
 export type ToolKey = keyof typeof TOOLS;
 
 export const PERSONAS = {
+  sage: {
+    name: "Sage",
+    role: "support_agent" as Role,
+    token: "Bearer token-agent",
+    highlights: ["Ticket queue triage", "Safe AI summary", "PII-masked customer context"],
+    restricted: ["Internal notes (full text)", "Manager-level escalation controls"],
+  },
   alice: {
     name: "Alice",
     role: "ops_engineer" as Role,
@@ -119,6 +132,7 @@ export function roleCanAccessTool(role: Role, tool: ToolKey): boolean {
 
 export function getToolFromPath(pathname: string | null): ToolKey | null {
   if (!pathname) return null;
+  if (pathname.startsWith("/support-triage")) return "support-triage";
   if (pathname.startsWith("/log-analyzer")) return "log-analyzer";
   if (pathname.startsWith("/qa-analyzer")) return "qa-analyzer";
   return null;

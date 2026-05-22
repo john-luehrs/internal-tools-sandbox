@@ -105,6 +105,7 @@ All error responses follow a consistent format:
 ### Support Tickets
 - **`GET /api/tickets`** — List all support tickets (with PII masking for agents)
 - **`GET /api/tickets/{ticket_id}`** — Get single ticket details
+- **`PATCH /api/tickets/{ticket_id}/escalate`** — Request/approve/reject/clear escalation status
 - **`POST /api/ai/summarize`** — AI-assisted ticket summarization
 
 ### Log Analyzer

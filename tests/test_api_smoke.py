@@ -32,6 +32,61 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertIsInstance(payload, list)
         self.assertGreater(len(payload), 0)
 
+    def test_support_tickets_rbac_denied_for_non_support_role(self) -> None:
+        response = self.client.get(
+            "/api/tickets",
+            headers={"Authorization": "Bearer token-qa"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_support_ai_summary_rbac(self) -> None:
+        denied = self.client.post(
+            "/api/ai/summarize",
+            headers={"Authorization": "Bearer token-qa", "Content-Type": "application/json"},
+            json={"text": "Ticket issue", "context": "smoke", "safe_mode": True},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        allowed = self.client.post(
+            "/api/ai/summarize",
+            headers={"Authorization": "Bearer token-manager", "Content-Type": "application/json"},
+            json={"text": "Ticket issue", "context": "smoke", "safe_mode": True},
+        )
+        self.assertEqual(allowed.status_code, 200)
+        payload = allowed.json()
+        self.assertIn("summary", payload)
+
+    def test_support_escalation_request_flow(self) -> None:
+        request_response = self.client.patch(
+            "/api/tickets/1/escalate",
+            headers={"Authorization": "Bearer token-agent", "Content-Type": "application/json"},
+            json={
+                "action": "request",
+                "target": "engineering_on_call",
+                "reason": "Customer impact is repeating and needs urgent engineering review.",
+            },
+        )
+        self.assertEqual(request_response.status_code, 200)
+        payload = request_response.json()
+        self.assertTrue(payload.get("success"))
+        self.assertEqual(payload.get("ticket", {}).get("escalation_status"), "requested")
+
+    def test_support_escalation_processing_rbac(self) -> None:
+        denied = self.client.patch(
+            "/api/tickets/2/escalate",
+            headers={"Authorization": "Bearer token-agent", "Content-Type": "application/json"},
+            json={"action": "approve"},
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        allowed = self.client.patch(
+            "/api/tickets/2/escalate",
+            headers={"Authorization": "Bearer token-manager", "Content-Type": "application/json"},
+            json={"action": "approve"},
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.json().get("ticket", {}).get("escalation_status"), "approved")
+
     def test_logs_team_list(self) -> None:
         response = self.client.get(
             "/api/logs/team",

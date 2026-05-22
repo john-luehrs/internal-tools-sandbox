@@ -27,6 +27,51 @@ export interface ExplanationResponse {
   safe_mode?: boolean;
 }
 
+export interface SupportTicket {
+  ticket_id: number;
+  customer_name: string;
+  email: string | null;
+  phone: string | null;
+  sla_tier: string;
+  risk_score: number;
+  description: string;
+  internal_notes: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  escalation_status?: "none" | "requested" | "approved" | "rejected" | null;
+  escalation_target?: string | null;
+  escalation_reason?: string | null;
+  escalation_requested_by?: string | null;
+  escalation_requested_at?: string | null;
+  escalation_resolved_by?: string | null;
+  escalation_resolved_at?: string | null;
+  sla_state?: "active" | "paused" | "met" | null;
+  sla_pause_reason?: string | null;
+  sla_paused_at?: string | null;
+  sla_paused_by?: string | null;
+  sla_resumed_at?: string | null;
+  sla_resumed_by?: string | null;
+  sla_pause_total_seconds?: number | null;
+  sla_met_at?: string | null;
+  sla_met_by?: string | null;
+}
+
+export interface SupportSummaryResponse {
+  summary: string;
+  safe_mode: boolean;
+}
+
+export interface SupportEscalationRequest {
+  action: "request" | "approve" | "reject" | "clear";
+  reason?: string;
+  target?: string;
+}
+
+export interface SupportSLAStateRequest {
+  action: "pause" | "resume" | "mark_met" | "reset_active";
+  reason?: string;
+}
+
 export interface QASprint {
   sprint_id: string;
   start_date: string;
