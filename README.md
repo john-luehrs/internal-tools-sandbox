@@ -69,7 +69,7 @@ py scripts/bootstrap.py
 uvicorn services.api:app --reload --port 8000
 ```
 
-### 3. Run the active web platform (Tool 2 + Tool 4)
+### 3. Run the active web platform (Tool 1 + Tool 2 + Tool 4)
 
 ```bash
 # Terminal 1 — API server
@@ -83,10 +83,11 @@ npm run dev -- --webpack
 
 Open one of the active dashboards:
 
+- http://localhost:3000/support-triage/tickets
 - http://localhost:3000/log-analyzer/team
 - http://localhost:3000/qa-analyzer/sprint
 
-Tools 1, 3, 5, 6, and 7 are not part of the current web platform release.
+Tools 3, 5, 6, and 7 are not part of the current web platform release.
 
 If Turbopack becomes unstable in your environment, continue using `npm run dev -- --webpack` as the default local frontend command.
 
@@ -98,9 +99,9 @@ For by-the-book agent-assisted development workflow (branching, PR gates, valida
 
 ### 4. Active vs legacy UI paths
 
-- Active release path: Next.js + FastAPI for Tool 2 and Tool 4 (`web/` + `services/api.py`)
+- Active release path: Next.js + FastAPI for Tool 1, Tool 2, and Tool 4 (`web/` + `services/api.py`)
 - Legacy/prototype path: Python module UIs under `app/` (some use Streamlit)
-- Streamlit is not required to run the active Tool 2/Tool 4 web experience
+- Streamlit is not required to run the active Tool 1/Tool 2/Tool 4 web experience
 
 If you want a command reminder for a project, run `py scripts/run_tool.py <tool_name>`.
 
