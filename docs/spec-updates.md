@@ -105,21 +105,25 @@ Each tool receives **two rounds of spec changes**, simulating real-world evolvin
 ## Initial Spec
 - Load customer + invoice data  
 - Identify inconsistent fields  
+- Add duplicate detection for customer records  
+- Add invoice normalization and validation reporting  
 - Provide cleanup suggestions  
 
 ## Spec Update 1
 **Reason:** Duplicate records discovered.
 
 **Changes:**
-- Add duplicate detection  
-- Add merge workflow  
+- Add merge decision workflow (approve/reject)  
+- Add confidence/risk labels for duplicate candidates  
+- Add explicit review queue actions  
 
 ## Spec Update 2
 **Reason:** Finance wants normalized invoices.
 
 **Changes:**
-- Add normalization rules  
-- Add validation report  
+- Add handoff lifecycle states (new, in_review, approved, resolved, rejected)  
+- Add AR ownership fields and action-export template  
+- Add rerun/closure tracking metrics  
 
 ---
 
