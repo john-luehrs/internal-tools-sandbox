@@ -78,7 +78,7 @@ py -m uvicorn services.api:app --reload --port 8000
 # Terminal 2 — Web UI
 cd web
 npm install
-npm run dev
+npm run dev -- --webpack
 ```
 
 Open one of the active dashboards:
@@ -87,6 +87,8 @@ Open one of the active dashboards:
 - http://localhost:3000/qa-analyzer/sprint
 
 Tools 1, 3, 5, 6, and 7 are not part of the current web platform release.
+
+If Turbopack becomes unstable in your environment, continue using `npm run dev -- --webpack` as the default local frontend command.
 
 ## Agent Workflow Governance
 

@@ -23,7 +23,7 @@ py -m uvicorn services.api:app --reload --port 8000
 # Terminal 2
 cd web
 npm install
-npm run dev
+npm run dev -- --webpack
 ```
 
 Open one of these routes:
@@ -165,7 +165,7 @@ py -m uvicorn services.api:app --reload --port 8000
 
 # Terminal 2: Next.js frontend
 cd sandbox/web
-npm run dev
+npm run dev -- --webpack
 ```
 
 Then visit:
