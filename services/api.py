@@ -7,7 +7,8 @@ import sqlite3
 import json
 import csv
 import io
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, Header, Response, Request
 from pydantic import BaseModel
@@ -214,6 +215,141 @@ def ensure_qa_schema(conn: sqlite3.Connection) -> None:
 
     conn.commit()
 
+
+def ensure_support_schema(conn: sqlite3.Connection) -> None:
+    """Backfill support ticket timestamp columns for queue age tracking."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tickets (
+            ticket_id INTEGER PRIMARY KEY,
+            customer_name TEXT,
+            customer_tier TEXT,
+            email TEXT,
+            phone TEXT,
+            sla_tier TEXT,
+            risk_score INTEGER,
+            description TEXT,
+            internal_notes TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            escalation_status TEXT DEFAULT 'none',
+            escalation_target TEXT,
+            escalation_reason TEXT,
+            escalation_requested_by TEXT,
+            escalation_requested_at TEXT,
+            escalation_resolved_by TEXT,
+            escalation_resolved_at TEXT,
+            sla_state TEXT DEFAULT 'active',
+            sla_pause_reason TEXT,
+            sla_paused_at TEXT,
+            sla_paused_by TEXT,
+            sla_resumed_at TEXT,
+            sla_resumed_by TEXT,
+            sla_pause_total_seconds REAL DEFAULT 0,
+            sla_met_at TEXT,
+            sla_met_by TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS support_ticket_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            actor TEXT,
+            details_json TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(tickets)").fetchall()}
+    required = {
+        "customer_tier": "TEXT",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
+        "escalation_status": "TEXT DEFAULT 'none'",
+        "escalation_target": "TEXT",
+        "escalation_reason": "TEXT",
+        "escalation_requested_by": "TEXT",
+        "escalation_requested_at": "TEXT",
+        "escalation_resolved_by": "TEXT",
+        "escalation_resolved_at": "TEXT",
+        "sla_state": "TEXT DEFAULT 'active'",
+        "sla_pause_reason": "TEXT",
+        "sla_paused_at": "TEXT",
+        "sla_paused_by": "TEXT",
+        "sla_resumed_at": "TEXT",
+        "sla_resumed_by": "TEXT",
+        "sla_pause_total_seconds": "REAL DEFAULT 0",
+        "sla_met_at": "TEXT",
+        "sla_met_by": "TEXT",
+    }
+    for col, col_type in required.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE tickets ADD COLUMN {col} {col_type}")
+
+    rows = conn.execute(
+        """
+        SELECT ticket_id, sla_tier
+        FROM tickets
+        WHERE created_at IS NULL OR created_at = ''
+        ORDER BY ticket_id ASC
+        """
+    ).fetchall()
+
+    now = datetime.utcnow()
+    sla_base_hours = {
+        "platinum": 2,
+        "gold": 6,
+        "silver": 12,
+        "bronze": 24,
+    }
+    multipliers = [0.4, 0.6, 0.8, 0.95, 1.1, 1.3, 1.6, 1.9]
+
+    for row in rows:
+        ticket_id = int(row["ticket_id"] if isinstance(row, sqlite3.Row) else row[0])
+        sla_tier = str(row["sla_tier"] if isinstance(row, sqlite3.Row) else row[1] or "").lower()
+        base = sla_base_hours.get(sla_tier, 8)
+        multiplier = multipliers[ticket_id % len(multipliers)]
+        age_hours = max(0.5, base * multiplier)
+
+        created_dt = now - timedelta(hours=age_hours)
+        update_offset = min(max(age_hours * 0.5, 0.25), (ticket_id % 4) + 1)
+        updated_dt = created_dt + timedelta(hours=update_offset)
+
+        conn.execute(
+            "UPDATE tickets SET created_at = ?, updated_at = ? WHERE ticket_id = ?",
+            (created_dt.isoformat() + "Z", updated_dt.isoformat() + "Z", ticket_id),
+        )
+
+    conn.execute(
+        "UPDATE tickets SET escalation_status = 'none' WHERE escalation_status IS NULL OR escalation_status = ''"
+    )
+    conn.execute(
+        """
+        UPDATE tickets
+        SET customer_tier = CASE LOWER(COALESCE(sla_tier, ''))
+            WHEN 'platinum' THEN 'enterprise'
+            WHEN 'gold' THEN 'mid_market'
+            WHEN 'silver' THEN 'small_business'
+            WHEN 'bronze' THEN 'small_business'
+            ELSE 'small_business'
+        END
+        WHERE customer_tier IS NULL OR customer_tier = ''
+        """
+    )
+    conn.execute(
+        "UPDATE tickets SET sla_state = 'active' WHERE sla_state IS NULL OR sla_state = ''"
+    )
+    conn.execute(
+        "UPDATE tickets SET sla_pause_total_seconds = 0 WHERE sla_pause_total_seconds IS NULL"
+    )
+
+    conn.commit()
+
 # ---------------------------------------------------------------------------
 # Simple token auth simulation
 # ---------------------------------------------------------------------------
@@ -234,6 +370,7 @@ DEMO_TOKENS = {
 }
 
 DEMO_ACTORS = {
+    "token-agent": "sage",
     "token-alice": "alice",
     "token-bob": "bob",
     "token-carol": "carol",
@@ -285,10 +422,160 @@ def get_role(
 # ---------------------------------------------------------------------------
 # Support Tickets
 # ---------------------------------------------------------------------------
+SUPPORT_ROLES = ("support_agent", "support_manager")
+SUPPORT_SLA_TARGET_HOURS = {
+    "platinum": 2,
+    "gold": 6,
+    "silver": 12,
+    "bronze": 24,
+}
+_SUPPORT_RESEED_LOCK = threading.Lock()
+
+
+def _record_support_event(
+    conn: sqlite3.Connection,
+    ticket_id: int,
+    event_type: str,
+    actor: Optional[str],
+    details: Optional[dict],
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO support_ticket_events (ticket_id, event_type, actor, details_json, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            ticket_id,
+            event_type,
+            actor,
+            json.dumps(details or {}, ensure_ascii=True),
+            datetime.utcnow().isoformat() + "Z",
+        ),
+    )
+
+
+def _tokenize_similarity(text: str) -> set[str]:
+    cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in (text or ""))
+    return {token for token in cleaned.split() if len(token) >= 4}
+
+
+def _text_similarity(left: str, right: str) -> float:
+    left_tokens = _tokenize_similarity(left)
+    right_tokens = _tokenize_similarity(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    overlap = len(left_tokens.intersection(right_tokens))
+    denominator = len(left_tokens.union(right_tokens))
+    if denominator == 0:
+        return 0.0
+    return overlap / denominator
+
+
+def _history_ticket_view(row: sqlite3.Row, include_similarity: bool = False, similarity_score: float = 0.0) -> dict:
+    payload = {
+        "ticket_id": row["ticket_id"],
+        "customer_name": row["customer_name"],
+        "customer_tier": row["customer_tier"],
+        "sla_tier": row["sla_tier"],
+        "risk_score": row["risk_score"],
+        "description": row["description"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "escalation_status": row["escalation_status"],
+        "sla_state": row["sla_state"],
+    }
+    if include_similarity:
+        payload["similarity_score"] = round(similarity_score, 3)
+    return payload
+
+
+def _parse_utc_iso(raw_value: Optional[str]) -> Optional[datetime]:
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _support_queue_all_red(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute(
+        """
+        SELECT ticket_id, sla_tier, created_at, sla_state, sla_paused_at, sla_pause_total_seconds
+        FROM tickets
+        """
+    ).fetchall()
+    if not rows:
+        return False
+
+    now = datetime.utcnow()
+    active_count = 0
+    active_red_count = 0
+
+    for row in rows:
+        sla_state = str(row["sla_state"] or "active").lower()
+        if sla_state != "active":
+            continue
+
+        created_at = _parse_utc_iso(row["created_at"])
+        if not created_at:
+            continue
+
+        active_count += 1
+
+        pause_seconds = float(row["sla_pause_total_seconds"] or 0)
+        paused_at = _parse_utc_iso(row["sla_paused_at"])
+        if paused_at:
+            pause_seconds += max(0.0, (now - paused_at).total_seconds())
+
+        effective_age_hours = max(0.0, ((now - created_at).total_seconds() - pause_seconds) / 3600.0)
+        sla_tier = str(row["sla_tier"] or "").lower()
+        threshold = SUPPORT_SLA_TARGET_HOURS.get(sla_tier, 8)
+        if effective_age_hours > threshold:
+            active_red_count += 1
+
+    return active_count > 0 and active_red_count == active_count
+
+
+def maybe_reseed_support_if_all_red() -> bool:
+    db_path = os.path.join(DB_DIR, "support.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
+    all_red = _support_queue_all_red(conn)
+    conn.close()
+
+    if not all_red:
+        return False
+
+    # Lock and re-check to avoid duplicate reseeds across concurrent requests.
+    with _SUPPORT_RESEED_LOCK:
+        verify_conn = sqlite3.connect(db_path)
+        verify_conn.row_factory = sqlite3.Row
+        ensure_support_schema(verify_conn)
+        still_all_red = _support_queue_all_red(verify_conn)
+        verify_conn.close()
+
+        if not still_all_red:
+            return False
+
+        from scripts.seed_support import seed_support
+
+        seed_support()
+        return True
+
+
 @app.get("/api/tickets")
 def list_tickets(role: str = Depends(get_role)):
+    if role not in SUPPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Support role required")
+
+    maybe_reseed_support_if_all_red()
+
     conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
     conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
     rows = conn.execute("SELECT * FROM tickets").fetchall()
     conn.close()
     tickets = [dict(r) for r in rows]
@@ -302,8 +589,14 @@ def list_tickets(role: str = Depends(get_role)):
 
 @app.get("/api/tickets/{ticket_id}")
 def get_ticket(ticket_id: int, role: str = Depends(get_role)):
+    if role not in SUPPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Support role required")
+
+    maybe_reseed_support_if_all_red()
+
     conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
     conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
     row = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
     conn.close()
     if not row:
@@ -316,20 +609,403 @@ def get_ticket(ticket_id: int, role: str = Depends(get_role)):
     return ticket
 
 
+@app.get("/api/tickets/{ticket_id}/history")
+def get_ticket_history(ticket_id: int, role: str = Depends(get_role)):
+    if role not in SUPPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Support role required")
+
+    maybe_reseed_support_if_all_red()
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
+
+    base_row = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+    if not base_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    related_rows = conn.execute(
+        """
+        SELECT *
+        FROM tickets
+        WHERE customer_name = ? AND ticket_id <> ?
+        ORDER BY created_at DESC
+        LIMIT 6
+        """,
+        (base_row["customer_name"], ticket_id),
+    ).fetchall()
+
+    candidate_rows = conn.execute(
+        """
+        SELECT *
+        FROM tickets
+        WHERE ticket_id <> ?
+        ORDER BY updated_at DESC
+        """,
+        (ticket_id,),
+    ).fetchall()
+
+    baseline_text = f"{base_row['description'] or ''} {base_row['internal_notes'] or ''}"
+    similar_scored: list[tuple[float, sqlite3.Row]] = []
+    for candidate in candidate_rows:
+        candidate_text = f"{candidate['description'] or ''} {candidate['internal_notes'] or ''}"
+        score = _text_similarity(baseline_text, candidate_text)
+        if score >= 0.14:
+            similar_scored.append((score, candidate))
+
+    similar_scored.sort(
+        key=lambda item: (
+            item[0],
+            str(item[1]["updated_at"] or ""),
+            int(item[1]["risk_score"] or 0),
+        ),
+        reverse=True,
+    )
+    similar_rows = similar_scored[:5]
+
+    event_rows = conn.execute(
+        """
+        SELECT event_id, event_type, actor, details_json, created_at
+        FROM support_ticket_events
+        WHERE ticket_id = ?
+        ORDER BY created_at DESC, event_id DESC
+        LIMIT 30
+        """,
+        (ticket_id,),
+    ).fetchall()
+    conn.close()
+
+    events = []
+    for row in event_rows:
+        details_payload = {}
+        raw_details = row["details_json"]
+        if raw_details:
+            try:
+                details_payload = json.loads(raw_details)
+            except json.JSONDecodeError:
+                details_payload = {"raw": raw_details}
+        events.append(
+            {
+                "event_id": row["event_id"],
+                "event_type": row["event_type"],
+                "actor": row["actor"],
+                "details": details_payload,
+                "created_at": row["created_at"],
+            }
+        )
+
+    return {
+        "ticket_id": ticket_id,
+        "related_tickets": [_history_ticket_view(row) for row in related_rows],
+        "similar_tickets": [
+            _history_ticket_view(row, include_similarity=True, similarity_score=score)
+            for score, row in similar_rows
+        ],
+        "events": events,
+    }
+
+
 class SummarizeRequest(BaseModel):
     text: str
     context: Optional[str] = ""
     safe_mode: bool = True
+    ticket_id: Optional[int] = None
+
+
+class SupportEscalationRequest(BaseModel):
+    action: str
+    reason: Optional[str] = None
+    target: Optional[str] = None
+
+
+class SupportSLAStateRequest(BaseModel):
+    action: str
+    reason: Optional[str] = None
+
+
+@app.patch("/api/tickets/{ticket_id}/escalate")
+def escalate_ticket(
+    ticket_id: int,
+    req: SupportEscalationRequest,
+    request: Request,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default=None),
+):
+    if role not in SUPPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Support role required")
+
+    action = (req.action or "").strip().lower()
+    if action not in ("request", "approve", "reject", "clear"):
+        raise HTTPException(status_code=400, detail="Invalid escalation action")
+
+    token = _extract_token(authorization or request.headers.get("authorization"), None)
+    actor = DEMO_ACTORS.get(token, role)
+    now = datetime.utcnow().isoformat() + "Z"
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
+
+    row = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    previous_status = row["escalation_status"] or "none"
+
+    if action == "request":
+        reason = (req.reason or "").strip()
+        if len(reason) < 5:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Escalation reason must be at least 5 characters")
+
+        target = (req.target or "engineering_on_call").strip() or "engineering_on_call"
+        conn.execute(
+            """
+            UPDATE tickets
+            SET escalation_status = 'requested',
+                escalation_target = ?,
+                escalation_reason = ?,
+                escalation_requested_by = ?,
+                escalation_requested_at = ?,
+                escalation_resolved_by = NULL,
+                escalation_resolved_at = NULL,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            (target, reason, actor, now, now, ticket_id),
+        )
+    else:
+        if role != "support_manager":
+            conn.close()
+            raise HTTPException(status_code=403, detail="Only support_manager can process escalation requests")
+
+        if action == "approve":
+            conn.execute(
+                """
+                UPDATE tickets
+                SET escalation_status = 'approved',
+                    escalation_resolved_by = ?,
+                    escalation_resolved_at = ?,
+                    updated_at = ?
+                WHERE ticket_id = ?
+                """,
+                (actor, now, now, ticket_id),
+            )
+        elif action == "reject":
+            conn.execute(
+                """
+                UPDATE tickets
+                SET escalation_status = 'rejected',
+                    escalation_resolved_by = ?,
+                    escalation_resolved_at = ?,
+                    updated_at = ?
+                WHERE ticket_id = ?
+                """,
+                (actor, now, now, ticket_id),
+            )
+        elif action == "clear":
+            conn.execute(
+                """
+                UPDATE tickets
+                SET escalation_status = 'none',
+                    escalation_target = NULL,
+                    escalation_reason = NULL,
+                    escalation_requested_by = NULL,
+                    escalation_requested_at = NULL,
+                    escalation_resolved_by = NULL,
+                    escalation_resolved_at = NULL,
+                    updated_at = ?
+                WHERE ticket_id = ?
+                """,
+                (now, ticket_id),
+            )
+
+    updated = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+    _record_support_event(
+        conn,
+        ticket_id=ticket_id,
+        event_type=f"escalation_{action}",
+        actor=actor,
+        details={
+            "previous_status": previous_status,
+            "current_status": (updated["escalation_status"] if updated else None),
+            "target": req.target,
+        },
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "ticket": dict(updated) if updated else None}
+
+
+@app.patch("/api/tickets/{ticket_id}/sla-state")
+def update_ticket_sla_state(
+    ticket_id: int,
+    req: SupportSLAStateRequest,
+    request: Request,
+    role: str = Depends(get_role),
+    authorization: Optional[str] = Header(default=None),
+):
+    if role not in SUPPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Support role required")
+
+    action = (req.action or "").strip().lower()
+    if action not in ("pause", "resume", "mark_met", "reset_active"):
+        raise HTTPException(status_code=400, detail="Invalid SLA action")
+
+    token = _extract_token(authorization or request.headers.get("authorization"), None)
+    actor = DEMO_ACTORS.get(token, role)
+    now = datetime.utcnow()
+    now_iso = now.isoformat() + "Z"
+
+    conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
+    conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
+
+    row = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    current_state = (row["sla_state"] or "active").lower()
+    previous_state = current_state
+    pause_total_seconds = float(row["sla_pause_total_seconds"] or 0)
+    paused_at = row["sla_paused_at"]
+
+    if action == "pause":
+        if role != "support_manager":
+            conn.close()
+            raise HTTPException(status_code=403, detail="Only support_manager can pause SLA")
+        reason = (req.reason or "").strip()
+        if len(reason) < 5:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Pause reason must be at least 5 characters")
+        if current_state == "paused":
+            conn.close()
+            raise HTTPException(status_code=400, detail="SLA is already paused")
+
+        conn.execute(
+            """
+            UPDATE tickets
+            SET sla_state = 'paused',
+                sla_pause_reason = ?,
+                sla_paused_at = ?,
+                sla_paused_by = ?,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            (reason, now_iso, actor, now_iso, ticket_id),
+        )
+
+    elif action == "resume":
+        if role != "support_manager":
+            conn.close()
+            raise HTTPException(status_code=403, detail="Only support_manager can resume SLA")
+        if current_state != "paused" or not paused_at:
+            conn.close()
+            raise HTTPException(status_code=400, detail="SLA is not paused")
+
+        paused_ts = datetime.fromisoformat(paused_at.replace("Z", "+00:00"))
+        pause_delta = max(0.0, (now - paused_ts.replace(tzinfo=None)).total_seconds())
+
+        conn.execute(
+            """
+            UPDATE tickets
+            SET sla_state = 'active',
+                sla_pause_total_seconds = ?,
+                sla_paused_at = NULL,
+                sla_paused_by = NULL,
+                sla_resumed_at = ?,
+                sla_resumed_by = ?,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            (pause_total_seconds + pause_delta, now_iso, actor, now_iso, ticket_id),
+        )
+
+    elif action == "mark_met":
+        conn.execute(
+            """
+            UPDATE tickets
+            SET sla_state = 'met',
+                sla_met_at = ?,
+                sla_met_by = ?,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            (now_iso, actor, now_iso, ticket_id),
+        )
+
+    elif action == "reset_active":
+        if role != "support_manager":
+            conn.close()
+            raise HTTPException(status_code=403, detail="Only support_manager can reset SLA state")
+        conn.execute(
+            """
+            UPDATE tickets
+            SET sla_state = 'active',
+                sla_pause_reason = NULL,
+                sla_paused_at = NULL,
+                sla_paused_by = NULL,
+                sla_resumed_at = NULL,
+                sla_resumed_by = NULL,
+                sla_pause_total_seconds = 0,
+                sla_met_at = NULL,
+                sla_met_by = NULL,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            (now_iso, ticket_id),
+        )
+
+    updated = conn.execute("SELECT * FROM tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+    _record_support_event(
+        conn,
+        ticket_id=ticket_id,
+        event_type=f"sla_{action}",
+        actor=actor,
+        details={
+            "previous_state": previous_state,
+            "current_state": (updated["sla_state"] if updated else None),
+            "reason": req.reason,
+        },
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "ticket": dict(updated) if updated else None}
 
 
 @app.post("/api/ai/summarize")
 def ai_summarize(req: SummarizeRequest, role: str = Depends(get_role)):
+    if role not in SUPPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Support role required")
+
     if len(req.text) > 4000:
         raise HTTPException(status_code=400, detail="Text exceeds maximum length of 4000 characters")
     from services.ai_client import get_ai_summary
     from services.pii_scrubber import scrub_pii
     text = scrub_pii(req.text) if req.safe_mode else req.text
     summary = get_ai_summary(text, context=req.context)
+
+    if req.ticket_id is not None and req.ticket_id > 0:
+        conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
+        conn.row_factory = sqlite3.Row
+        ensure_support_schema(conn)
+        exists = conn.execute("SELECT ticket_id FROM tickets WHERE ticket_id = ?", (req.ticket_id,)).fetchone()
+        if exists:
+            _record_support_event(
+                conn,
+                ticket_id=req.ticket_id,
+                event_type="ai_summary_generated",
+                actor=role,
+                details={
+                    "safe_mode": req.safe_mode,
+                    "context_present": bool((req.context or "").strip()),
+                },
+            )
+            conn.commit()
+        conn.close()
+
     return {"summary": summary, "safe_mode": req.safe_mode}
 
 

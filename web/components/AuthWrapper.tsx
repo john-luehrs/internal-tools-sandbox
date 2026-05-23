@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import EmployeeSidebarStats from "@/components/EmployeeSidebarStats";
 import QASidebarContext from "@/components/QASidebarContext";
+import SupportSidebarContext from "@/components/SupportSidebarContext";
 import { useRole } from "@/hooks/useRole";
 import {
   ROLES,
@@ -17,6 +18,12 @@ import {
   roleCanAccessTool,
 } from "@/lib/auth";
 import { RoleContext } from "@/lib/RoleContext";
+
+const TOOL_ICONS: Record<ToolKey, string> = {
+  "support-triage": "🎫",
+  "log-analyzer": "📊",
+  "qa-analyzer": "🧪",
+};
 
 const LOGIN_PASSWORD = "password";
 
@@ -54,7 +61,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
           <div className="sidebar-brand">
             <p className="sidebar-brand-kicker">Operations Console</p>
             <h1 className="sidebar-brand-title">Internal Tools</h1>
-            <p className="sidebar-brand-subtitle">Live workflows for incident and QA operations.</p>
+            <p className="sidebar-brand-subtitle">Live workflows for support, incident, and QA operations.</p>
           </div>
           <div className="sidebar-section">
             <h2 className="sidebar-title">Tools</h2>
@@ -64,7 +71,7 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
                 href={TOOLS[toolKey].path}
                 className={`nav-link${pathname?.startsWith(`/${toolKey}`) ? " active" : ""}`}
               >
-                {toolKey === "log-analyzer" ? "📊" : "🧪"} {TOOLS[toolKey].label}
+                {TOOL_ICONS[toolKey]} {TOOLS[toolKey].label}
               </a>
             ))}
           </div>
@@ -83,8 +90,9 @@ export default function AuthWrapper({ children }: { children: React.ReactNode })
               Sign out
             </button>
           </div>
+          {activeTool === "support-triage" && <SupportSidebarContext />}
           {activeTool === "qa-analyzer" && <QASidebarContext />}
-          {isManager && <EmployeeSidebarStats />}
+          {isManager && activeTool === "log-analyzer" && <EmployeeSidebarStats />}
         </nav>
         <main className="content">{children}</main>
       </div>

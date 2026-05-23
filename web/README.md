@@ -1,10 +1,10 @@
 # Internal Tools Web Platform
 
-Current release provides a shared Next.js + React frontend for Tool 4 (Log Analyzer) and Tool 2 (QA Defect Pattern Analyzer), backed by FastAPI on `localhost:8000`.
+Current release provides a shared Next.js + React frontend for Tool 1 (Support Ticket Triage), Tool 4 (Log Analyzer), and Tool 2 (QA Defect Pattern Analyzer), backed by FastAPI on `localhost:8000`.
 
 ## Scope Clarification
 
-- This `web/` app is the active release surface for Tool 2 and Tool 4.
+- This `web/` app is the active release surface for Tool 1, Tool 2, and Tool 4.
 - Streamlit-based UIs in `app/` are legacy/prototype modules and are not required for this web workflow.
 - Running this frontend only requires FastAPI + Next.js as shown below.
 
@@ -23,11 +23,12 @@ py -m uvicorn services.api:app --reload --port 8000
 # Terminal 2
 cd web
 npm install
-npm run dev
+npm run dev -- --webpack
 ```
 
 Open one of these routes:
 
+- http://localhost:3000/support-triage/tickets
 - http://localhost:3000/log-analyzer/team
 - http://localhost:3000/qa-analyzer/sprint
 
@@ -35,7 +36,9 @@ Open one of these routes:
 
 - Persona-based demo login for Alice, Bob, Carol, Dana, Evan, Quinn, Riley, Taylor, and Morgan
 - Distinct ops/support and QA role experiences with RBAC-enforced endpoints
+- Support triage dashboard with risk-aware queueing and safe AI ticket summaries
 - Log Analyzer and QA Analyzer share one authentication shell with role-based tool visibility
+- Support Triage, Log Analyzer, and QA Analyzer share one authentication shell with role-based tool visibility
 - Personal stats for ops users, timeline analytics for manager-level users, and QA sprint triage modal workflow
 - Manager Ops Brief with safe AI summarization and audit-backed invocation
 - My Logs automatically follows the signed-in persona instead of a manual engineer picker
@@ -91,6 +94,16 @@ flowchart LR
 
 ## Pages
 
+### `/support-triage/tickets`
+
+Support dashboard with:
+- Ticket queue table and drill-in detail panel
+- SLA/risk/search filters and risk-band KPI cards
+- Sidebar queue age trackers: oldest age, average queue age, and age by SLA tier
+- Escalation controls (request + manager approve/reject/clear) with status visibility
+- Safe-mode AI summary generation for ticket descriptions
+- Role-aware data masking for support agents
+
 ### `/log-analyzer/team`
 
 Team-wide dashboard with:
@@ -126,6 +139,7 @@ See `lib/api.ts` for all fetch wrappers.
 Available demo personas:
 
 ```typescript
+sage   -> Bearer token-agent
 alice  -> Bearer token-alice
 bob    -> Bearer token-bob
 carol  -> Bearer token-carol
@@ -151,10 +165,11 @@ py -m uvicorn services.api:app --reload --port 8000
 
 # Terminal 2: Next.js frontend
 cd sandbox/web
-npm run dev
+npm run dev -- --webpack
 ```
 
 Then visit:
 
+- http://localhost:3000/support-triage/tickets
 - http://localhost:3000/log-analyzer/team
 - http://localhost:3000/qa-analyzer/sprint
