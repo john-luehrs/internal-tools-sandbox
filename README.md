@@ -12,7 +12,7 @@ This sandbox simulates realistic business friction, internal APIs, synthetic dat
 
 | # | Tool | Friction | Impact | Status |
 |---|------|----------|--------|--------|
-| 1 | [Support Ticket Triage Dashboard](app/support_dashboard/) | 6.2hr avg first response vs 2hr SLA target; agents spend 75% of ticket time searching 4 systems | First-response time target < 2hr; SLA breaches ↓ 18%; CSAT 3.6 → 4.2/5 | Not Started |
+| 1 | [Support Ticket Triage Dashboard](app/support_dashboard/) | 6.2hr avg first response vs 2hr SLA target; agents spend 75% of ticket time searching 4 systems | First-response time target < 2hr; SLA breaches ↓ 18%; CSAT 3.6 → 4.2/5 | Testable |
 | 2 | [QA Defect Pattern Analyzer](app/qa_analyzer/) | 10–12hr/sprint manual defect analysis; 22% of tickets are duplicates; 4–6hr/week lost to known-issue rework | Pattern analysis < 30min/sprint; duplicates caught before filing | Complete |
 | 3 | [Onboarding Workflow Automation](app/onboarding/) | 14 untracked manual steps; 5–7 days to full access; 40% of hires arrive Day 1 without accounts | Same-day provisioning for standard roles; manager visibility dashboard | Not Started |
 | 4 | [AI-Assisted Log Analyzer](app/log_analyzer/) | 47min MTTD; 3 incidents/quarter missed for 2+ hrs; 35% of on-call shift spent on log review | MTTD target < 10min; anomaly scoring replaces manual scanning | Complete |
