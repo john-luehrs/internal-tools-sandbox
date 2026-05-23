@@ -513,9 +513,25 @@ export default function SupportTriagePage() {
                 <div className="support-detail-grid">
                   <div className="support-detail-block">
                     <p><strong>Customer:</strong> {selectedTicket.customer_name}</p>
-                    <p><strong>Email:</strong> {selectedTicket.email ?? "N/A"}</p>
-                    <p><strong>Phone:</strong> {selectedTicket.phone ?? "N/A"}</p>
+                    <p>
+                      <strong>Email:</strong>{" "}
+                      {selectedTicket.email ? (
+                        <a href={`mailto:${selectedTicket.email}`}>{selectedTicket.email}</a>
+                      ) : (
+                        "N/A"
+                      )}
+                    </p>
+                    <p>
+                      <strong>Phone:</strong>{" "}
+                      {selectedTicket.phone ? (
+                        <a href={`tel:${selectedTicket.phone}`}>{selectedTicket.phone}</a>
+                      ) : (
+                        "N/A"
+                      )}
+                    </p>
                     <p><strong>SLA:</strong> {selectedTicket.sla_tier}</p>
+                    <p><strong>Created:</strong> {formatTimestamp(selectedTicket.created_at)}</p>
+                    <p><strong>Updated:</strong> {formatTimestamp(selectedTicket.updated_at)}</p>
                     <p>
                       <strong>Risk Score:</strong>{" "}
                       <span className={`badge ${riskClass(selectedTicket.risk_score)}`}>{selectedTicket.risk_score}</span>

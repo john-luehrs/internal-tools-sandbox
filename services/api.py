@@ -7,6 +7,7 @@ import sqlite3
 import json
 import csv
 import io
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, Header, Response, Request
@@ -394,12 +395,98 @@ def get_role(
 # Support Tickets
 # ---------------------------------------------------------------------------
 SUPPORT_ROLES = ("support_agent", "support_manager")
+SUPPORT_SLA_TARGET_HOURS = {
+    "platinum": 2,
+    "gold": 6,
+    "silver": 12,
+    "bronze": 24,
+}
+_SUPPORT_RESEED_LOCK = threading.Lock()
+
+
+def _parse_utc_iso(raw_value: Optional[str]) -> Optional[datetime]:
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _support_queue_all_red(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute(
+        """
+        SELECT ticket_id, sla_tier, created_at, sla_state, sla_paused_at, sla_pause_total_seconds
+        FROM tickets
+        """
+    ).fetchall()
+    if not rows:
+        return False
+
+    now = datetime.utcnow()
+    active_count = 0
+    active_red_count = 0
+
+    for row in rows:
+        sla_state = str(row["sla_state"] or "active").lower()
+        if sla_state != "active":
+            continue
+
+        created_at = _parse_utc_iso(row["created_at"])
+        if not created_at:
+            continue
+
+        active_count += 1
+
+        pause_seconds = float(row["sla_pause_total_seconds"] or 0)
+        paused_at = _parse_utc_iso(row["sla_paused_at"])
+        if paused_at:
+            pause_seconds += max(0.0, (now - paused_at).total_seconds())
+
+        effective_age_hours = max(0.0, ((now - created_at).total_seconds() - pause_seconds) / 3600.0)
+        sla_tier = str(row["sla_tier"] or "").lower()
+        threshold = SUPPORT_SLA_TARGET_HOURS.get(sla_tier, 8)
+        if effective_age_hours > threshold:
+            active_red_count += 1
+
+    return active_count > 0 and active_red_count == active_count
+
+
+def maybe_reseed_support_if_all_red() -> bool:
+    db_path = os.path.join(DB_DIR, "support.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    ensure_support_schema(conn)
+    all_red = _support_queue_all_red(conn)
+    conn.close()
+
+    if not all_red:
+        return False
+
+    # Lock and re-check to avoid duplicate reseeds across concurrent requests.
+    with _SUPPORT_RESEED_LOCK:
+        verify_conn = sqlite3.connect(db_path)
+        verify_conn.row_factory = sqlite3.Row
+        ensure_support_schema(verify_conn)
+        still_all_red = _support_queue_all_red(verify_conn)
+        verify_conn.close()
+
+        if not still_all_red:
+            return False
+
+        from scripts.seed_support import seed_support
+
+        seed_support()
+        return True
 
 
 @app.get("/api/tickets")
 def list_tickets(role: str = Depends(get_role)):
     if role not in SUPPORT_ROLES:
         raise HTTPException(status_code=403, detail="Support role required")
+
+    maybe_reseed_support_if_all_red()
 
     conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
     conn.row_factory = sqlite3.Row
@@ -419,6 +506,8 @@ def list_tickets(role: str = Depends(get_role)):
 def get_ticket(ticket_id: int, role: str = Depends(get_role)):
     if role not in SUPPORT_ROLES:
         raise HTTPException(status_code=403, detail="Support role required")
+
+    maybe_reseed_support_if_all_red()
 
     conn = sqlite3.connect(os.path.join(DB_DIR, "support.db"))
     conn.row_factory = sqlite3.Row
