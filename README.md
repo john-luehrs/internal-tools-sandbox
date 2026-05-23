@@ -16,7 +16,7 @@ This sandbox simulates realistic business friction, internal APIs, synthetic dat
 | 2 | [QA Defect Pattern Analyzer](app/qa_analyzer/) | 10–12hr/sprint manual defect analysis; 22% of tickets are duplicates; 4–6hr/week lost to known-issue rework | Pattern analysis < 30min/sprint; duplicates caught before filing | Complete |
 | 3 | [Onboarding Workflow Automation](app/onboarding/) | 14 untracked manual steps; 5–7 days to full access; 40% of hires arrive Day 1 without accounts | Same-day provisioning for standard roles; manager visibility dashboard | Not Started |
 | 4 | [AI-Assisted Log Analyzer](app/log_analyzer/) | 47min MTTD; 3 incidents/quarter missed for 2+ hrs; 35% of on-call shift spent on log review | MTTD target < 10min; anomaly scoring replaces manual scanning | Complete |
-| 5 | [Internal Data Cleanup Tool](app/data_cleanup/) | ~12% duplicate customer records; $40K in billing errors/quarter; 6–8hr/month manual reconciliation | Reconciliation < 30min/month; duplicate and invoice errors eliminated | Not Started |
+| 5 | [Internal Data Cleanup Tool](app/data_cleanup/) | ~12% duplicate customer records; $40K in billing errors/quarter; 6–8hr/month manual reconciliation | Reconciliation < 30min/month; duplicate and invoice errors eliminated | Testable |
 | 6 | [Slack Productivity Bot](app/slack_bot/) | Runbooks split across 3 tools; 45min/week/engineer lost to doc search; 9 engineer-hrs/week team-wide | Doc search < 5min/week/engineer; deploy status and runbooks in one command | Not Started |
 | 7 | [GitHub Actions Automation](app/github_actions/) | 25–35min of manual steps per deploy cycle; 3 production incidents/quarter from skipped manual steps | Deploy cycle < 5min automated; failures notify Slack immediately | Not Started |
 
@@ -91,13 +91,25 @@ Tools 3, 5, 6, and 7 are not part of the current web platform release.
 
 If Turbopack becomes unstable in your environment, continue using `npm run dev -- --webpack` as the default local frontend command.
 
+### 4. Run Tool 5 standalone desktop app (In Progress)
+
+```bash
+# Prerequisite: .NET SDK 8.x
+dotnet --version
+
+# Launch Tool 5
+dotnet run --project app/data_cleanup
+```
+
+Tool 5 is a standalone Avalonia desktop workflow in `app/data_cleanup` and is not part of the active Next.js web platform.
+
 ## Agent Workflow Governance
 
 For by-the-book agent-assisted development workflow (branching, PR gates, validation, docs/changelog discipline, and review protocol), see:
 
 - `docs/agent-constitution.md`
 
-### 4. Active vs legacy UI paths
+### 5. Active vs legacy UI paths
 
 - Active release path: Next.js + FastAPI for Tool 1, Tool 2, and Tool 4 (`web/` + `services/api.py`)
 - Legacy/prototype path: Python module UIs under `app/` (some use Streamlit)

@@ -41,3 +41,7 @@ web/out/
 
 # SQLite (seeded locally, not committed)
 db/*.db
+app/data_cleanup/scratch/
+
+app/data_cleanup/bin/
+app/data_cleanup/obj/

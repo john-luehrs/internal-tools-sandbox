@@ -13,7 +13,7 @@ TOOL_COMMANDS = {
     "onboarding": ["streamlit", "run", "app/onboarding/app.py"],
     "log_analyzer": ["web", "ui"],
     "log_analyzer_legacy": ["streamlit", "run", "app/log_analyzer/app.py"],
-    "data_cleanup": ["streamlit", "run", "app/data_cleanup/app.py"],
+    "data_cleanup": ["dotnet", "run", "--project", "app/data_cleanup"],
     "slack_bot": ["streamlit", "run", "app/slack_bot/streamlit_app.py"],
     "github_actions": ["streamlit", "run", "app/github_actions/app.py"],
     "api": ["uvicorn", "services.api:app", "--reload", "--port", "8000"],

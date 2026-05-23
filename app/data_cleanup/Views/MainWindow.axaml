@@ -1,0 +1,192 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:data_cleanup.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="860"
+        x:Class="data_cleanup.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+    Title="Internal Data Cleanup Tool">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+        <Grid.Styles>
+            <Style Selector="DataGrid">
+                <Setter Property="RowBackground" Value="White" />
+            </Style>
+            <Style Selector="DataGridRow:nth-child(odd)">
+                <Setter Property="Background" Value="White" />
+            </Style>
+            <Style Selector="DataGridRow:nth-child(even)">
+                <Setter Property="Background" Value="#FAF6EE" />
+            </Style>
+        </Grid.Styles>
+
+        <Border Background="#13243E" CornerRadius="10" Padding="16">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel>
+                    <TextBlock Foreground="White" FontSize="22" FontWeight="SemiBold" Text="Internal Data Cleanup Tool" />
+                    <TextBlock Foreground="#C9D6E9" Text="Profile data, review duplicate and invoice exceptions, then generate deterministic reports." />
+                </StackPanel>
+                <Button Grid.Column="1" VerticalAlignment="Center" Content="Refresh Analysis" Command="{Binding RefreshAnalysisCommand}" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,*,*,*" Margin="0,12,0,0">
+            <Button Background="#EEF5FF" BorderBrush="#C6DAF7" BorderThickness="1" CornerRadius="8" Padding="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="customers">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#355D94" Text="Customers" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding CustomerTotal}" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="1" Background="#F5F8FC" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="10" Margin="10,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="duplicate_rows">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#5F708A" Text="Duplicate Rows" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding DuplicateCountDisplay}" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="2" Background="#F5F8FC" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="10" Margin="10,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="duplicate_groups">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#5F708A" Text="Duplicate Groups" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding DuplicateGroupCountDisplay}" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="3" Background="#F2F9F6" BorderBrush="#C9E7D8" BorderThickness="1" CornerRadius="8" Padding="10" Margin="10,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="invoices">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#3C7B5C" Text="Invoices" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding InvoiceTotal}" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="4" Background="#EFFAF4" BorderBrush="#C7EBD5" BorderThickness="1" CornerRadius="8" Padding="10" Margin="10,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="normalized">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#3A7553" Text="Normalized" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding InvoiceNormalizedCountDisplay}" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="5" Background="#FFF4F0" BorderBrush="#F0D2C8" BorderThickness="1" CornerRadius="8" Padding="10" Margin="10,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="invalid">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#8A4A3D" Text="Invalid" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding InvoiceInvalidCountDisplay}" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="6" Background="#FFF8E8" BorderBrush="#EFDFAF" BorderThickness="1" CornerRadius="8" Padding="10" Margin="10,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="empty">
+                <StackPanel>
+                    <TextBlock FontSize="12" Foreground="#8A6D28" Text="Empty" />
+                    <TextBlock FontSize="20" FontWeight="Bold" Text="{Binding InvoiceEmptyCountDisplay}" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <TabControl Grid.Row="2" Margin="0,8,0,0" SelectedIndex="{Binding SelectedStepIndex}">
+            <TabControl.Styles>
+                <Style Selector="TabItem">
+                    <Setter Property="FontSize" Value="14" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Setter Property="Padding" Value="14,8" />
+                    <Setter Property="Margin" Value="0,0,8,0" />
+                    <Setter Property="Foreground" Value="#4D607C" />
+                    <Setter Property="Background" Value="#EEF3FB" />
+                    <Setter Property="BorderBrush" Value="#CDD9EC" />
+                    <Setter Property="BorderThickness" Value="1" />
+                </Style>
+
+                <Style Selector="TabItem /template/ Border">
+                    <Setter Property="CornerRadius" Value="8" />
+                </Style>
+
+                <Style Selector="TabItem:pointerover">
+                    <Setter Property="Background" Value="#E5EDF9" />
+                    <Setter Property="BorderBrush" Value="#B8C9E3" />
+                </Style>
+
+                <Style Selector="TabItem:selected">
+                    <Setter Property="Foreground" Value="White" />
+                    <Setter Property="Background" Value="#1F4A87" />
+                    <Setter Property="BorderBrush" Value="#1F4A87" />
+                </Style>
+            </TabControl.Styles>
+
+            <TabItem Header="1. Data Profile">
+                <Grid RowDefinitions="Auto,Auto,*,Auto,*" Margin="8">
+                    <TextBlock FontWeight="SemiBold" Text="{Binding CustomerPreviewTitle}" />
+                    <TextBlock Grid.Row="1" Margin="0,4,0,8" Foreground="#5F708A" Text="{Binding DuplicateCount, StringFormat='Rows currently flagged in duplicate analysis: {0}'}" />
+                    <DataGrid Grid.Row="2" Margin="0,0,0,8" ItemsSource="{Binding DisplayedCustomerRows}" IsReadOnly="True" AutoGenerateColumns="True" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="3" Margin="0,8,0,0" FontWeight="SemiBold" Text="Invoice records" />
+                    <DataGrid Grid.Row="4" ItemsSource="{Binding DisplayedProfileInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" VerticalAlignment="Stretch" />
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="2. Candidate Analysis">
+                <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,*" Margin="8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock FontWeight="SemiBold" Text="Duplicate customer candidates" />
+                        <Button Grid.Column="1" Content="Run Analysis" Command="{Binding RunAnalysisCommand}" />
+                    </Grid>
+                    <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="#5F708A" Text="{Binding DuplicateCount, StringFormat='Duplicate rows: {0}'}" />
+                    <TextBlock Grid.Row="2" Margin="0,0,0,8" Foreground="#5F708A" Text="{Binding DuplicateGroupCount, StringFormat='Duplicate groups: {0}'}" />
+                    <DataGrid Grid.Row="3" Margin="0,0,0,8" ItemsSource="{Binding DuplicateRows}" IsReadOnly="True" AutoGenerateColumns="True" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="4" Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding InvoicePreviewTitle}" />
+                    <DataGrid Grid.Row="5" ItemsSource="{Binding DisplayedInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" VerticalAlignment="Stretch" />
+                </Grid>
+            </TabItem>
+
+            <!--
+            Step 3 Review Queue is intentionally hidden for this phase.
+            Keep this block for Update 1 re-enable.
+            <TabItem Header="3. Review Queue">
+                <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Flag Duplicate Candidates" Command="{Binding FlagDuplicateReviewCommand}" />
+                        <Button Content="Flag Invoice Exceptions" Command="{Binding FlagInvoiceExceptionsCommand}" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Margin="0,8,0,0" Foreground="#5F708A" Text="{Binding InvoiceInvalidCount, StringFormat='Invalid invoice exceptions pending review: {0}'}" />
+                    <TextBlock Grid.Row="2" Text="Invalid invoice rows require manual review before reconciliation close." />
+                    <DataGrid Grid.Row="3" Margin="0,8,0,0" ItemsSource="{Binding InvalidInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" VerticalAlignment="Stretch" />
+                </Grid>
+            </TabItem>
+            -->
+
+            <TabItem Header="3. Execute Run">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="8">
+                    <TextBlock Text="Run deterministic report generation and produce artifact files." />
+
+                    <Grid Grid.Row="1" ColumnDefinitions="Auto,*">
+                        <TextBlock VerticalAlignment="Center" Text="Database Path" />
+                        <TextBox Grid.Column="1" Text="{Binding DbPath}" MinWidth="700" />
+                    </Grid>
+
+                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" Margin="0,8,0,0">
+                        <TextBlock VerticalAlignment="Center" Text="Output Directory" />
+                        <TextBox Grid.Column="1" Text="{Binding OutputDirectory}" MinWidth="700" />
+                    </Grid>
+
+                    <Grid Grid.Row="3" ColumnDefinitions="Auto,220,Auto" Margin="0,8,0,0">
+                        <TextBlock VerticalAlignment="Center" Text="Actor" />
+                        <TextBox Grid.Column="1" Text="{Binding Actor}" />
+                        <Button Grid.Column="2" Content="Run Cleanup Pipeline" Command="{Binding RunPipelineCommand}" />
+                    </Grid>
+
+                    <Border Grid.Row="4" CornerRadius="8" BorderBrush="#CCD7EA" BorderThickness="1" Padding="10" Margin="0,8,0,0" IsVisible="{Binding HasLatestRun}">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto">
+                            <TextBlock FontWeight="SemiBold" Text="Latest Run" />
+                            <TextBlock Grid.Row="1" Text="{Binding LatestRun.RunId, StringFormat='Run ID: {0}'}" />
+                            <TextBlock Grid.Row="2" Text="{Binding LatestRun.DuplicatesPath, StringFormat='Duplicates: {0}'}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="3" Text="{Binding LatestRun.InvoicesPath, StringFormat='Invoices: {0}'}" TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="3" Background="#F8FAFD" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="10">
+            <TextBlock Text="{Binding StatusMessage}" />
+        </Border>
+    </Grid>
+
+</Window>
