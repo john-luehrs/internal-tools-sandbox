@@ -31,6 +31,7 @@ class ApiSmokeTests(unittest.TestCase):
         payload = response.json()
         self.assertIsInstance(payload, list)
         self.assertGreater(len(payload), 0)
+        self.assertIn("customer_tier", payload[0])
 
     def test_support_tickets_rbac_denied_for_non_support_role(self) -> None:
         response = self.client.get(
@@ -86,6 +87,36 @@ class ApiSmokeTests(unittest.TestCase):
         )
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json().get("ticket", {}).get("escalation_status"), "approved")
+
+    def test_support_ticket_history_contains_audit_events(self) -> None:
+        update_response = self.client.patch(
+            "/api/tickets/3/escalate",
+            headers={"Authorization": "Bearer token-agent", "Content-Type": "application/json"},
+            json={
+                "action": "request",
+                "target": "engineering_on_call",
+                "reason": "Repeated customer impact and clear breach risk across channels.",
+            },
+        )
+        self.assertEqual(update_response.status_code, 200)
+
+        history_response = self.client.get(
+            "/api/tickets/3/history",
+            headers={"Authorization": "Bearer token-agent"},
+        )
+        self.assertEqual(history_response.status_code, 200)
+        payload = history_response.json()
+        self.assertIn("related_tickets", payload)
+        self.assertIn("similar_tickets", payload)
+        self.assertIn("events", payload)
+        self.assertTrue(any(event.get("event_type") == "escalation_request" for event in payload.get("events", [])))
+
+    def test_support_ticket_history_rbac_denied_for_non_support(self) -> None:
+        response = self.client.get(
+            "/api/tickets/1/history",
+            headers={"Authorization": "Bearer token-qa"},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_logs_team_list(self) -> None:
         response = self.client.get(

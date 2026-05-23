@@ -10,6 +10,12 @@ NAMES = ["Alice Johnson", "Bob Martinez", "Carol Williams", "David Lee", "Emma B
          "Frank Davis", "Grace Wilson", "Henry Moore", "Isabella Taylor", "James Anderson"]
 DOMAINS = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "company.org"]
 SLA_TIERS = ["platinum", "gold", "silver", "bronze"]
+CUSTOMER_TIERS = {
+    "platinum": "enterprise",
+    "gold": "mid_market",
+    "silver": "small_business",
+    "bronze": "small_business",
+}
 DESCRIPTIONS = [
     "Unable to log into the portal since yesterday morning.",
     "Payment processing fails with error code 500 on checkout.",
@@ -42,6 +48,7 @@ def seed_support():
         CREATE TABLE tickets (
             ticket_id INTEGER PRIMARY KEY,
             customer_name TEXT,
+            customer_tier TEXT,
             email TEXT,
             phone TEXT,
             sla_tier TEXT,
@@ -86,6 +93,7 @@ def seed_support():
         email = f"{name.split()[0].lower()}.{name.split()[1].lower()}{random.randint(1,99)}@{random.choice(DOMAINS)}"
         phone = f"{random.randint(200,999)}-{random.randint(100,999)}-{random.randint(1000,9999)}"
         sla_tier = random.choice(SLA_TIERS)
+        customer_tier = CUSTOMER_TIERS.get(sla_tier, "small_business")
         multiplier = random.choices(age_multipliers, weights=age_weights, k=1)[0]
         age_hours = max(0.5, sla_base_hours[sla_tier] * multiplier)
         created_dt = now - timedelta(hours=age_hours, minutes=random.randint(0, 59))
@@ -156,7 +164,7 @@ def seed_support():
             sla_pause_total_seconds = float(random.randint(0, 1800))
 
         rows.append((
-            i, name, email, phone,
+            i, name, customer_tier, email, phone,
             sla_tier,
             random.randint(10, 100),
             random.choice(DESCRIPTIONS),
@@ -181,7 +189,7 @@ def seed_support():
             sla_met_by,
         ))
     conn.executemany(
-        "INSERT INTO tickets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+        "INSERT INTO tickets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
     )
     conn.commit()
     conn.close()

@@ -30,6 +30,7 @@ export interface ExplanationResponse {
 export interface SupportTicket {
   ticket_id: number;
   customer_name: string;
+  customer_tier: string;
   email: string | null;
   phone: string | null;
   sla_tier: string;
@@ -70,6 +71,35 @@ export interface SupportEscalationRequest {
 export interface SupportSLAStateRequest {
   action: "pause" | "resume" | "mark_met" | "reset_active";
   reason?: string;
+}
+
+export interface SupportTicketHistoryItem {
+  ticket_id: number;
+  customer_name: string;
+  customer_tier: string;
+  sla_tier: string;
+  risk_score: number;
+  description: string;
+  created_at: string | null;
+  updated_at: string | null;
+  escalation_status?: "none" | "requested" | "approved" | "rejected" | null;
+  sla_state?: "active" | "paused" | "met" | null;
+  similarity_score?: number;
+}
+
+export interface SupportTicketEvent {
+  event_id: number;
+  event_type: string;
+  actor: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SupportTicketHistoryResponse {
+  ticket_id: number;
+  related_tickets: SupportTicketHistoryItem[];
+  similar_tickets: SupportTicketHistoryItem[];
+  events: SupportTicketEvent[];
 }
 
 export interface QASprint {

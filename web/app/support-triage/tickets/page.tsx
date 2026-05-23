@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  getSupportTicketHistory,
   getSupportTicket,
   getSupportTickets,
   summarizeSupportTicket,
@@ -10,7 +11,7 @@ import {
   updateSupportTicketSLAState,
 } from "@/lib/api";
 import { useRoleContext } from "@/lib/RoleContext";
-import { SupportTicket } from "@/lib/types";
+import { SupportTicket, SupportTicketHistoryResponse } from "@/lib/types";
 
 function riskBand(score: number): "critical" | "high" | "medium" | "low" {
   if (score >= 90) return "critical";
@@ -47,6 +48,110 @@ function formatTimestamp(value?: string | null): string {
   return new Date(ts).toLocaleString();
 }
 
+function formatEventType(value: string): string {
+  return (value || "event")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatLabel(value?: string | null): string {
+  if (!value) return "N/A";
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+async function refreshTicketHistorySafe(
+  ticketId: number,
+  token?: string,
+  tickets?: SupportTicket[],
+  fallbackTicket?: SupportTicket | null
+): Promise<{ history?: SupportTicketHistoryResponse; error?: string }> {
+  try {
+    const history = await getSupportTicketHistory(ticketId, token ?? undefined);
+    return { history };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to load ticket history";
+    if ((message.toLowerCase().includes("not found") || message.includes("404")) && fallbackTicket && tickets) {
+      return { history: buildFallbackHistory(fallbackTicket, tickets) };
+    }
+    return { error: message };
+  }
+}
+
+function tokenizeText(value: string): Set<string> {
+  const cleaned = (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4);
+  return new Set(cleaned);
+}
+
+function similarityScore(left: string, right: string): number {
+  const a = tokenizeText(left);
+  const b = tokenizeText(right);
+  if (!a.size || !b.size) return 0;
+
+  let overlap = 0;
+  a.forEach((token) => {
+    if (b.has(token)) overlap += 1;
+  });
+  const union = new Set([...a, ...b]).size;
+  if (!union) return 0;
+  return overlap / union;
+}
+
+function buildFallbackHistory(ticket: SupportTicket, allTickets: SupportTicket[]): SupportTicketHistoryResponse {
+  const related = allTickets
+    .filter((item) => item.ticket_id !== ticket.ticket_id && item.customer_name === ticket.customer_name)
+    .slice(0, 6)
+    .map((item) => ({
+      ticket_id: item.ticket_id,
+      customer_name: item.customer_name,
+      sla_tier: item.sla_tier,
+      risk_score: item.risk_score,
+      description: item.description,
+      created_at: item.created_at ?? null,
+      updated_at: item.updated_at ?? null,
+      escalation_status: item.escalation_status ?? "none",
+      sla_state: item.sla_state ?? "active",
+    }));
+
+  const baselineText = `${ticket.description || ""} ${ticket.internal_notes || ""}`;
+  const similar = allTickets
+    .filter((item) => item.ticket_id !== ticket.ticket_id)
+    .map((item) => {
+      const score = similarityScore(
+        baselineText,
+        `${item.description || ""} ${item.internal_notes || ""}`
+      );
+      return { item, score };
+    })
+    .filter((entry) => entry.score >= 0.14)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 5)
+    .map(({ item, score }) => ({
+      ticket_id: item.ticket_id,
+      customer_name: item.customer_name,
+      sla_tier: item.sla_tier,
+      risk_score: item.risk_score,
+      description: item.description,
+      created_at: item.created_at ?? null,
+      updated_at: item.updated_at ?? null,
+      escalation_status: item.escalation_status ?? "none",
+      sla_state: item.sla_state ?? "active",
+      similarity_score: Number(score.toFixed(3)),
+    }));
+
+  return {
+    ticket_id: ticket.ticket_id,
+    related_tickets: related,
+    similar_tickets: similar,
+    events: [],
+  };
+}
+
 export default function SupportTriagePage() {
   const { role, token } = useRoleContext();
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
@@ -64,6 +169,9 @@ export default function SupportTriagePage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryText, setSummaryText] = useState<string>("");
   const [summaryError, setSummaryError] = useState<string>("");
+  const [ticketHistory, setTicketHistory] = useState<SupportTicketHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [slaPauseReason, setSlaPauseReason] = useState("");
   const [slaLoading, setSlaLoading] = useState(false);
   const [slaMessage, setSlaMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -77,10 +185,16 @@ export default function SupportTriagePage() {
   const [hoverPosition, setHoverPosition] = useState<{ x: number; y: number } | null>(null);
   const showHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detailLoadSeqRef = useRef(0);
+  const ticketsRef = useRef<SupportTicket[]>([]);
 
   const canAccess = role === "support_agent" || role === "support_manager";
   const canManageEscalation = role === "support_manager";
   const canManageSLA = role === "support_manager";
+
+  useEffect(() => {
+    ticketsRef.current = tickets;
+  }, [tickets]);
 
   useEffect(() => {
     const loadTickets = async () => {
@@ -88,6 +202,7 @@ export default function SupportTriagePage() {
         setLoading(true);
         const data = await getSupportTickets(token ?? undefined);
         setTickets(data);
+        ticketsRef.current = data;
         if (data.length) {
           setSelectedId((prev) => prev ?? data[0].ticket_id);
         }
@@ -108,15 +223,58 @@ export default function SupportTriagePage() {
     const loadSelected = async () => {
       if (!selectedId) {
         setSelectedTicket(null);
+        setTicketHistory(null);
         return;
       }
+
+      const loadSeq = ++detailLoadSeqRef.current;
       try {
+        setHistoryLoading(true);
         const ticket = await getSupportTicket(selectedId, token ?? undefined);
+        if (loadSeq !== detailLoadSeqRef.current) return;
+
         setSelectedTicket(ticket);
         setSummaryText("");
         setSummaryError("");
+
+        const historyResult = await refreshTicketHistorySafe(ticket.ticket_id, token ?? undefined, ticketsRef.current, ticket);
+        if (loadSeq !== detailLoadSeqRef.current) return;
+        if (historyResult.history) {
+          setTicketHistory(historyResult.history);
+          setHistoryError("");
+        } else {
+          setTicketHistory(null);
+          setHistoryError(historyResult.error || "Failed to load ticket history");
+        }
       } catch (err) {
-        setSummaryError(err instanceof Error ? err.message : "Failed to load ticket details");
+        if (loadSeq !== detailLoadSeqRef.current) return;
+
+        const message = err instanceof Error ? err.message : "Failed to load ticket details";
+        const notFound = message.toLowerCase().includes("ticket not found");
+
+        if (notFound) {
+          try {
+            const freshTickets = await getSupportTickets(token ?? undefined);
+            if (loadSeq !== detailLoadSeqRef.current) return;
+
+            setTickets(freshTickets);
+            ticketsRef.current = freshTickets;
+            const fallbackId = freshTickets.find((item) => item.ticket_id !== selectedId)?.ticket_id ?? freshTickets[0]?.ticket_id ?? null;
+            if (fallbackId !== null && fallbackId !== selectedId) {
+              setSelectedId(fallbackId);
+            }
+            setSummaryError("Queue refreshed after data reseed. Re-loading selected ticket.");
+            setHistoryError("");
+          } catch {
+            setSummaryError(message);
+          }
+        } else {
+          setSummaryError(message);
+        }
+      } finally {
+        if (loadSeq === detailLoadSeqRef.current) {
+          setHistoryLoading(false);
+        }
       }
     };
 
@@ -146,7 +304,7 @@ export default function SupportTriagePage() {
       if (escalationFilter !== "all" && escalationStatus !== escalationFilter) return false;
       if (search.trim()) {
         const q = search.trim().toLowerCase();
-        const haystack = `${ticket.customer_name} ${ticket.description}`.toLowerCase();
+        const haystack = `${ticket.customer_name} ${ticket.customer_tier} ${ticket.description}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -265,7 +423,21 @@ export default function SupportTriagePage() {
       const updatedTicket = result.ticket;
       if (updatedTicket) {
         setSelectedTicket(updatedTicket);
-        setTickets((prev) => prev.map((item) => (item.ticket_id === updatedTicket.ticket_id ? updatedTicket : item)));
+        const updatedList = ticketsRef.current.map((item) => (item.ticket_id === updatedTicket.ticket_id ? updatedTicket : item));
+        ticketsRef.current = updatedList;
+        setTickets(updatedList);
+        const historyResult = await refreshTicketHistorySafe(
+          updatedTicket.ticket_id,
+          token ?? undefined,
+          updatedList,
+          updatedTicket
+        );
+        if (historyResult.history) {
+          setTicketHistory(historyResult.history);
+          setHistoryError("");
+        } else if (historyResult.error) {
+          setHistoryError(historyResult.error);
+        }
       }
 
       const messageByAction: Record<typeof action, string> = {
@@ -310,7 +482,21 @@ export default function SupportTriagePage() {
       const updatedTicket = result.ticket;
       if (updatedTicket) {
         setSelectedTicket(updatedTicket);
-        setTickets((prev) => prev.map((item) => (item.ticket_id === updatedTicket.ticket_id ? updatedTicket : item)));
+        const updatedList = ticketsRef.current.map((item) => (item.ticket_id === updatedTicket.ticket_id ? updatedTicket : item));
+        ticketsRef.current = updatedList;
+        setTickets(updatedList);
+        const historyResult = await refreshTicketHistorySafe(
+          updatedTicket.ticket_id,
+          token ?? undefined,
+          updatedList,
+          updatedTicket
+        );
+        if (historyResult.history) {
+          setTicketHistory(historyResult.history);
+          setHistoryError("");
+        } else if (historyResult.error) {
+          setHistoryError(historyResult.error);
+        }
       }
 
       const messageByAction: Record<typeof action, string> = {
@@ -340,9 +526,22 @@ export default function SupportTriagePage() {
         selectedTicket.description,
         context,
         safeMode,
+        selectedTicket.ticket_id,
         token ?? undefined
       );
       setSummaryText(result.summary);
+      const historyResult = await refreshTicketHistorySafe(
+        selectedTicket.ticket_id,
+        token ?? undefined,
+        ticketsRef.current,
+        selectedTicket
+      );
+      if (historyResult.history) {
+        setTicketHistory(historyResult.history);
+        setHistoryError("");
+      } else if (historyResult.error) {
+        setHistoryError(historyResult.error);
+      }
     } catch (err) {
       setSummaryError(err instanceof Error ? err.message : "Failed to generate summary");
     } finally {
@@ -402,7 +601,7 @@ export default function SupportTriagePage() {
               <option value="all">All tiers</option>
               {slaOptions.map((tier) => (
                 <option key={tier} value={tier}>
-                  {tier}
+                  {formatLabel(tier)}
                 </option>
               ))}
             </select>
@@ -466,6 +665,7 @@ export default function SupportTriagePage() {
                   <tr>
                     <th>ID</th>
                     <th>Customer</th>
+                    <th>Tier</th>
                     <th>SLA</th>
                     <th>Risk</th>
                     <th>Escalation</th>
@@ -483,7 +683,8 @@ export default function SupportTriagePage() {
                     >
                       <td>#{ticket.ticket_id}</td>
                       <td>{ticket.customer_name}</td>
-                      <td>{ticket.sla_tier}</td>
+                      <td>{formatLabel(ticket.customer_tier)}</td>
+                      <td>{formatLabel(ticket.sla_tier)}</td>
                       <td>
                         <span className={`badge ${riskClass(ticket.risk_score)}`}>
                           {ticket.risk_score}
@@ -513,6 +714,7 @@ export default function SupportTriagePage() {
                 <div className="support-detail-grid">
                   <div className="support-detail-block">
                     <p><strong>Customer:</strong> {selectedTicket.customer_name}</p>
+                    <p><strong>Tier:</strong> {selectedTicket.customer_tier}</p>
                     <p>
                       <strong>Email:</strong>{" "}
                       {selectedTicket.email ? (
@@ -647,6 +849,81 @@ export default function SupportTriagePage() {
                     <li>Risk model scored customer at {selectedTicket.risk_score}.</li>
                     <li>SLA tier mapped to {selectedTicket.sla_tier} response policy.</li>
                   </ul>
+                </div>
+
+                <div className="support-history-grid">
+                  <div className="support-history-card">
+                    <p className="support-timeline-title">Customer History</p>
+                    {historyLoading ? <p className="sidebar-muted">Loading history...</p> : null}
+                    {historyError ? <p className="login-error">{historyError}</p> : null}
+                    {!historyLoading && !historyError && !ticketHistory?.related_tickets.length ? (
+                      <p className="sidebar-muted">No prior tickets for this customer yet.</p>
+                    ) : null}
+                    {ticketHistory?.related_tickets?.length ? (
+                      <ul>
+                        {ticketHistory.related_tickets.map((item) => (
+                          <li key={item.ticket_id}>
+                            <button
+                              type="button"
+                              className="support-history-link"
+                              onClick={() => setSelectedId(item.ticket_id)}
+                            >
+                              #{item.ticket_id} - {item.description}
+                            </button>
+                            <span className="support-history-meta">
+                              {item.sla_tier} | risk {item.risk_score} | {formatTimestamp(item.created_at)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+
+                  <div className="support-history-card">
+                    <p className="support-timeline-title">Similar Tickets</p>
+                    {historyLoading ? <p className="sidebar-muted">Loading similar tickets...</p> : null}
+                    {!historyLoading && !historyError && !ticketHistory?.similar_tickets.length ? (
+                      <p className="sidebar-muted">No similar tickets crossed the confidence threshold.</p>
+                    ) : null}
+                    {ticketHistory?.similar_tickets?.length ? (
+                      <ul>
+                        {ticketHistory.similar_tickets.map((item) => (
+                          <li key={item.ticket_id}>
+                            <button
+                              type="button"
+                              className="support-history-link"
+                              onClick={() => setSelectedId(item.ticket_id)}
+                            >
+                              #{item.ticket_id} - {item.description}
+                            </button>
+                            <span className="support-history-meta">
+                              score {(item.similarity_score ?? 0).toFixed(2)} | {item.sla_tier} | risk {item.risk_score}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="support-audit-card">
+                  <p className="support-timeline-title">Audit Trail</p>
+                  {historyLoading ? <p className="sidebar-muted">Loading events...</p> : null}
+                  {!historyLoading && !historyError && !ticketHistory?.events.length ? (
+                    <p className="sidebar-muted">No events recorded for this ticket yet.</p>
+                  ) : null}
+                  {ticketHistory?.events?.length ? (
+                    <ul className="support-audit-list">
+                      {ticketHistory.events.map((event) => (
+                        <li key={event.event_id}>
+                          <p className="support-audit-title">{formatEventType(event.event_type)}</p>
+                          <p className="support-history-meta">
+                            {formatTimestamp(event.created_at)} | actor: {event.actor || "system"}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
 
                 <div className="support-ai-card">

@@ -148,6 +148,7 @@ The Support Tickets API powers ticket triage workflows with role-based masking, 
 |-------|------|-------------|
 | `ticket_id` | integer | Unique identifier (PK) |
 | `customer_name` | string | Customer name (PII) |
+| `customer_tier` | string | Customer segment (`enterprise`, `mid_market`, `small_business`) |
 | `email` | string | Customer email (PII, masked for agents) |
 | `phone` | string | Customer phone (PII, masked for agents) |
 | `sla_tier` | string | Service tier (internal) |

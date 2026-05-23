@@ -6,6 +6,7 @@ import {
   SupportSummaryResponse,
   SupportEscalationRequest,
   SupportSLAStateRequest,
+  SupportTicketHistoryResponse,
   QASprint,
   QAHeatmapPoint,
   QADefect,
@@ -65,6 +66,7 @@ export async function summarizeSupportTicket(
   text: string,
   context: string,
   safeMode: boolean,
+  ticketId?: number,
   token?: string
 ): Promise<SupportSummaryResponse> {
   return apiFetch<SupportSummaryResponse>("/ai/summarize", {
@@ -74,8 +76,16 @@ export async function summarizeSupportTicket(
       text,
       context,
       safe_mode: safeMode,
+      ticket_id: ticketId,
     },
   });
+}
+
+export async function getSupportTicketHistory(
+  ticketId: number,
+  token?: string
+): Promise<SupportTicketHistoryResponse> {
+  return apiFetch<SupportTicketHistoryResponse>(`/tickets/${ticketId}/history`, { token });
 }
 
 export async function updateSupportTicketEscalation(
