@@ -13,11 +13,24 @@
 
 Current status: this tool is not part of the active web platform release.
 
-Requires `db/finance.db` from the sandbox root. If needed, run `py scripts/bootstrap.py` first.
+Requires `db/finance.db` from the sandbox root.
 
 ### Prerequisites
 
 - .NET SDK 8.x (`dotnet --version`)
+- Python environment for sandbox data setup (`py -m venv .venv` + `pip install -r requirements.txt`)
+
+### Data setup
+
+From repo root:
+
+```bash
+# One-time setup for sandbox DBs and baseline data
+py scripts/bootstrap.py
+
+# Optional: regenerate Tool 5 dataset with realistic clean/ambiguous/true-merge distribution
+py scripts/seed_finance.py
+```
 
 ### Desktop App (Avalonia)
 
@@ -31,9 +44,8 @@ dotnet run --project app/data_cleanup
 
 1. Data Profile: inspect customer and invoice source rows
 2. Candidate Analysis: review duplicate candidates and invoice normalization outcomes
-3. Execute Run: generate deterministic report artifacts
-
-Review Queue controls are intentionally hidden in this phase and will be restored in a future update.
+3. Review Queue: queue duplicate candidates, inspect quick comparisons, and capture approve/reject merge decisions
+4. Execute Run: generate deterministic report artifacts
 
 Artifacts are written locally to `reports/data_cleanup/` by default:
 
@@ -46,5 +58,6 @@ Artifacts are written locally to `reports/data_cleanup/` by default:
 
 - This implementation is Windows-first and source-run oriented for sandbox use.
 - Previous Python/Streamlit implementation has been moved to `app/data_cleanup/scratch/`.
+- Merge decisions in Update 1 capture review outcomes and audit events; physical database row merges are not executed in this phase.
 
 Use `py scripts/run_tool.py data_cleanup` for command guidance.

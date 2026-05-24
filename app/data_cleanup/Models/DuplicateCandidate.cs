@@ -8,4 +8,7 @@ public sealed class DuplicateCandidate
     public string? Email { get; init; }
     public string? NormalizedEmail { get; init; }
     public string? AccountTier { get; init; }
+    public int ConfidenceScore { get; init; }
+    public string ConfidenceLabel { get; init; } = "low";
+    public string RiskLabel { get; init; } = "low";
 }

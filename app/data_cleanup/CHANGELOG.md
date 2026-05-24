@@ -1,5 +1,15 @@
 # Internal Data Cleanup Tool Changelog
 
+## v0.3.0 - Spec Update 1 (Testable)
+
+- Added duplicate merge decision workflow in Review Queue with explicit approve/reject actions.
+- Added confidence and risk labels for duplicate candidates.
+- Added quick comparison panel for selected duplicate groups with baseline-vs-candidate MATCH/DIFF signals.
+- Added review decision audit events for queued, approved, and rejected duplicate actions.
+- Added readable DataGrid headers and contextual hover descriptions for confidence/risk and comparison signal columns.
+- Updated seeded finance data to include realistic distribution: mostly clean records, ambiguous candidates, and clear true-merge pairs.
+- Clarified phase behavior: decisions are captured and audited; physical database merges are not executed in Update 1.
+
 ## v0.2.0 - Desktop Foundation (Testable)
 
 - Rebuilt Tool 5 as a standalone Avalonia desktop app in `app/data_cleanup`.

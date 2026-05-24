@@ -92,6 +92,10 @@ public sealed class DataCleanupService
 
 		foreach (var group in grouped)
 		{
+			var confidenceScore = ComputeDuplicateConfidenceScore(group.Select(item => item.Customer));
+			var confidenceLabel = ResolveConfidenceLabel(confidenceScore);
+			var riskLabel = ResolveRiskLabel(group.Select(item => item.Customer));
+
 			foreach (var item in group.OrderBy(x => x.Customer.CustomerId))
 			{
 				output.Add(new DuplicateCandidate
@@ -102,6 +106,9 @@ public sealed class DataCleanupService
 					Email = item.Customer.Email,
 					NormalizedEmail = item.NormalizedEmail,
 					AccountTier = item.Customer.AccountTier,
+					ConfidenceScore = confidenceScore,
+					ConfidenceLabel = confidenceLabel,
+					RiskLabel = riskLabel,
 				});
 			}
 
@@ -109,6 +116,33 @@ public sealed class DataCleanupService
 		}
 
 		return output;
+	}
+
+	public IReadOnlyList<DuplicateReviewItem> BuildDuplicateReviewQueue(IEnumerable<DuplicateCandidate> duplicates)
+	{
+		var queue = duplicates
+			.GroupBy(item => item.DuplicateGroup)
+			.OrderBy(group => group.Key)
+			.Select(group =>
+			{
+				var rows = group.OrderBy(item => item.CustomerId).ToList();
+				var first = rows.First();
+
+				return new DuplicateReviewItem
+				{
+					DuplicateGroup = group.Key,
+					NormalizedEmail = first.NormalizedEmail ?? string.Empty,
+					CandidateCount = rows.Count,
+					CustomerIds = string.Join(", ", rows.Select(item => item.CustomerId)),
+					Companies = string.Join(" | ", rows.Select(item => item.CompanyName).Where(item => !string.IsNullOrWhiteSpace(item))),
+					ConfidenceScore = first.ConfidenceScore,
+					ConfidenceLabel = first.ConfidenceLabel,
+					RiskLabel = first.RiskLabel,
+				};
+			})
+			.ToList();
+
+		return queue;
 	}
 
 	public IReadOnlyList<NormalizedInvoice> NormalizeInvoices(IEnumerable<InvoiceRecord> invoices)
@@ -254,11 +288,75 @@ public sealed class DataCleanupService
 		return (null, "invalid", "parse_failed");
 	}
 
+	private static int ComputeDuplicateConfidenceScore(IEnumerable<CustomerRecord> group)
+	{
+		var rows = group.ToList();
+		if (rows.Count == 0)
+		{
+			return 0;
+		}
+
+		var score = 50 + (rows.Count * 10);
+		var normalizedCompanyNames = rows
+			.Select(item => (item.CompanyName ?? string.Empty).Trim().ToLowerInvariant())
+			.Where(item => !string.IsNullOrWhiteSpace(item))
+			.Distinct()
+			.ToList();
+
+		if (normalizedCompanyNames.Count == 1)
+		{
+			score += 15;
+		}
+
+		if (rows.Any(item => string.Equals(item.AccountTier, "enterprise", StringComparison.OrdinalIgnoreCase)))
+		{
+			score += 5;
+		}
+
+		return Math.Clamp(score, 0, 99);
+	}
+
+	private static string ResolveConfidenceLabel(int confidenceScore)
+	{
+		if (confidenceScore >= 85)
+		{
+			return "high";
+		}
+
+		if (confidenceScore >= 70)
+		{
+			return "medium";
+		}
+
+		return "low";
+	}
+
+	private static string ResolveRiskLabel(IEnumerable<CustomerRecord> group)
+	{
+		var rows = group.ToList();
+		if (rows.Count == 0)
+		{
+			return "low";
+		}
+
+		if (rows.Any(item => string.Equals(item.AccountTier, "enterprise", StringComparison.OrdinalIgnoreCase)) || rows.Count >= 4)
+		{
+			return "high";
+		}
+
+		if (rows.Any(item => string.Equals(item.AccountTier, "business", StringComparison.OrdinalIgnoreCase)) || rows.Count == 3)
+		{
+			return "medium";
+		}
+
+		return "low";
+	}
+
 	private static void WriteDuplicateCsv(string path, IReadOnlyList<DuplicateCandidate> rows)
 	{
 		var lines = new List<string>
 		{
-			"duplicate_group,customer_id,company_name,email,normalized_email,account_tier"
+			"duplicate_group,customer_id,company_name,email,normalized_email,account_tier,confidence_score,confidence_label,risk_label"
 		};
 
 		lines.AddRange(rows.Select(row => string.Join(",",
@@ -267,7 +365,10 @@ public sealed class DataCleanupService
 			EscapeCsv(row.CompanyName),
 			EscapeCsv(row.Email),
 			EscapeCsv(row.NormalizedEmail),
-			EscapeCsv(row.AccountTier))));
+			EscapeCsv(row.AccountTier),
+			row.ConfidenceScore,
+			EscapeCsv(row.ConfidenceLabel),
+			EscapeCsv(row.RiskLabel))));
 
 		File.WriteAllLines(path, lines, Encoding.UTF8);
 	}
