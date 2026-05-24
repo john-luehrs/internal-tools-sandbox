@@ -97,11 +97,8 @@ If Turbopack becomes unstable in your environment, continue using `npm run dev -
 # Prerequisite: .NET SDK 8.x
 dotnet --version
 
-# Ensure sandbox data exists (one-time bootstrap)
+# Ensure sandbox data exists with the latest seed definitions for all tools
 py scripts/bootstrap.py
-
-# Optional: reseed Tool 5 dataset with realistic duplicate scenarios
-py scripts/seed_finance.py
 
 # Launch Tool 5
 dotnet run --project app/data_cleanup

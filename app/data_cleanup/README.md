@@ -25,12 +25,11 @@ Requires `db/finance.db` from the sandbox root.
 From repo root:
 
 ```bash
-# One-time setup for sandbox DBs and baseline data
+# One-time setup for sandbox DBs and latest seed data across all projects
 py scripts/bootstrap.py
-
-# Optional: regenerate Tool 5 dataset with realistic clean/ambiguous/true-merge distribution
-py scripts/seed_finance.py
 ```
+
+`bootstrap.py` runs `scripts/seed_all.py`, which always uses the latest version of each tool's seed script (including Tool 5 `seed_finance.py`).
 
 ### Desktop App (Avalonia)
 
