@@ -91,7 +91,7 @@ Tools 3, 5, 6, and 7 are not part of the current web platform release.
 
 If Turbopack becomes unstable in your environment, continue using `npm run dev -- --webpack` as the default local frontend command.
 
-### 4. Run Tool 5 standalone desktop app (In Progress)
+### 4. Run Tool 5 standalone desktop app (Testable)
 
 ```bash
 # Prerequisite: .NET SDK 8.x
@@ -102,6 +102,13 @@ dotnet run --project app/data_cleanup
 ```
 
 Tool 5 is a standalone Avalonia desktop workflow in `app/data_cleanup` and is not part of the active Next.js web platform.
+
+Current desktop workflow steps:
+
+1. Data Profile
+2. Candidate Analysis
+3. Review Queue (approve/reject decisions + quick comparison)
+4. Execute Run
 
 ## Agent Workflow Governance
 

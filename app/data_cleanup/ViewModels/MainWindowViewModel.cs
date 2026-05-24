@@ -18,6 +18,8 @@ public partial class MainWindowViewModel : ViewModelBase
 	public ObservableCollection<CustomerRecord> DisplayedCustomerRows { get; } = [];
 	public ObservableCollection<InvoiceRecord> DisplayedProfileInvoiceRows { get; } = [];
 	public ObservableCollection<DuplicateCandidate> DuplicateRows { get; } = [];
+	public ObservableCollection<DuplicateReviewItem> DuplicateReviewQueue { get; } = [];
+	public ObservableCollection<DuplicateComparisonRow> SelectedDuplicateComparisonRows { get; } = [];
 	public ObservableCollection<NormalizedInvoice> NormalizedRows { get; } = [];
 	public ObservableCollection<NormalizedInvoice> AffectedInvoiceRows { get; } = [];
 	public ObservableCollection<NormalizedInvoice> DisplayedInvoiceRows { get; } = [];
@@ -71,12 +73,21 @@ public partial class MainWindowViewModel : ViewModelBase
 	[ObservableProperty]
 	private CleanupRunResult? _latestRun;
 
+	[ObservableProperty]
+	private DuplicateReviewItem? _selectedDuplicateReviewItem;
+
+	[ObservableProperty]
+	private string _selectedComparisonTitle;
+
 	public bool HasLatestRun => LatestRun is not null;
 	public string DuplicateCountDisplay => AnalysisReady ? DuplicateCount.ToString() : "--";
 	public string DuplicateGroupCountDisplay => AnalysisReady ? DuplicateGroupCount.ToString() : "--";
 	public string InvoiceNormalizedCountDisplay => AnalysisReady ? InvoiceNormalizedCount.ToString() : "--";
 	public string InvoiceInvalidCountDisplay => AnalysisReady ? InvoiceInvalidCount.ToString() : "--";
 	public string InvoiceEmptyCountDisplay => AnalysisReady ? InvoiceEmptyCount.ToString() : "--";
+	public int PendingReviewCount => DuplicateReviewQueue.Count(item => item.DecisionStatus == "pending");
+	public int ApprovedReviewCount => DuplicateReviewQueue.Count(item => item.DecisionStatus == "approved");
+	public int RejectedReviewCount => DuplicateReviewQueue.Count(item => item.DecisionStatus == "rejected");
 
 	public MainWindowViewModel()
 	{
@@ -86,6 +97,7 @@ public partial class MainWindowViewModel : ViewModelBase
 		SelectedStepIndex = 0;
 		InvoicePreviewTitle = "Affected invoice preview";
 		CustomerPreviewTitle = "Customer records";
+		SelectedComparisonTitle = "Quick comparison (select a duplicate group)";
 		StatusMessage = "Ready";
 
 		RefreshAnalysis();
@@ -104,10 +116,14 @@ public partial class MainWindowViewModel : ViewModelBase
 			Replace(DisplayedCustomerRows, customers);
 			Replace(DisplayedProfileInvoiceRows, invoices);
 			Replace(DuplicateRows, []);
+			Replace(DuplicateReviewQueue, []);
+			Replace(SelectedDuplicateComparisonRows, []);
 			Replace(NormalizedRows, []);
 			Replace(AffectedInvoiceRows, []);
 			Replace(DisplayedInvoiceRows, []);
 			Replace(InvalidInvoiceRows, []);
+			SelectedDuplicateReviewItem = null;
+			SelectedComparisonTitle = "Quick comparison (select a duplicate group)";
 
 			CustomerTotal = customers.Count;
 			InvoiceTotal = invoices.Count;
@@ -144,6 +160,7 @@ public partial class MainWindowViewModel : ViewModelBase
 				.ToList();
 
 			Replace(DuplicateRows, duplicates);
+			Replace(DuplicateReviewQueue, _service.BuildDuplicateReviewQueue(duplicates));
 			Replace(NormalizedRows, normalized);
 			Replace(AffectedInvoiceRows, affectedInvoices);
 			Replace(DisplayedInvoiceRows, affectedInvoices);
@@ -157,6 +174,10 @@ public partial class MainWindowViewModel : ViewModelBase
 			InvoiceEmptyCount = normalized.Count(x => x.ParseStatus == "empty");
 			AnalysisReady = true;
 			InvoicePreviewTitle = "Affected invoice preview";
+			SelectedDuplicateReviewItem = DuplicateReviewQueue.FirstOrDefault();
+			OnPropertyChanged(nameof(PendingReviewCount));
+			OnPropertyChanged(nameof(ApprovedReviewCount));
+			OnPropertyChanged(nameof(RejectedReviewCount));
 
 			StatusMessage = "Candidate analysis complete.";
 		}
@@ -245,23 +266,42 @@ public partial class MainWindowViewModel : ViewModelBase
 	{
 		try
 		{
+			if (DuplicateReviewQueue.Count == 0)
+			{
+				StatusMessage = "No duplicate candidates found to queue.";
+				return;
+			}
+
 			_service.AppendAuditEvent(
 				OutputDirectory,
 				Actor,
-				"flagged_duplicates",
+				"queued_duplicate_candidates",
 				"customer_batch",
 				new Dictionary<string, object>
 				{
 					["duplicate_count"] = DuplicateCount,
 					["duplicate_group_count"] = DuplicateGroupCount,
+					["pending_review_count"] = PendingReviewCount,
 				});
 
-			StatusMessage = "Duplicate review queue event logged.";
+			StatusMessage = "Duplicate candidates queued for merge review.";
 		}
 		catch (Exception ex)
 		{
 			StatusMessage = $"Failed to log duplicate review action: {ex.Message}";
 		}
+	}
+
+	[RelayCommand]
+	private void ApproveSelectedMerge()
+	{
+		SetSelectedMergeDecision("approved");
+	}
+
+	[RelayCommand]
+	private void RejectSelectedMerge()
+	{
+		SetSelectedMergeDecision("rejected");
 	}
 
 	[RelayCommand]
@@ -355,6 +395,111 @@ public partial class MainWindowViewModel : ViewModelBase
 	partial void OnInvoiceEmptyCountChanged(int value)
 	{
 		OnPropertyChanged(nameof(InvoiceEmptyCountDisplay));
+	}
+
+	partial void OnSelectedDuplicateReviewItemChanged(DuplicateReviewItem? value)
+	{
+		if (value is null)
+		{
+			Replace(SelectedDuplicateComparisonRows, []);
+			SelectedComparisonTitle = "Quick comparison (select a duplicate group)";
+			return;
+		}
+
+		PopulateSelectedDuplicateComparison(value);
+
+		StatusMessage = $"Selected duplicate group {value.DuplicateGroup} ({value.CandidateCount} candidates).";
+	}
+
+	private void PopulateSelectedDuplicateComparison(DuplicateReviewItem selectedGroup)
+	{
+		var rows = DuplicateRows
+			.Where(item => item.DuplicateGroup == selectedGroup.DuplicateGroup)
+			.OrderBy(item => item.CustomerId)
+			.ToList();
+
+		if (rows.Count == 0)
+		{
+			Replace(SelectedDuplicateComparisonRows, []);
+			SelectedComparisonTitle = "Quick comparison (no rows in selected group)";
+			return;
+		}
+
+		var baseline = rows[0];
+		var baselineEmail = (baseline.Email ?? string.Empty).Trim().ToLowerInvariant();
+		var baselineCompany = (baseline.CompanyName ?? string.Empty).Trim().ToLowerInvariant();
+		var baselineTier = (baseline.AccountTier ?? string.Empty).Trim().ToLowerInvariant();
+
+		var comparisonRows = rows.Select(item =>
+		{
+			var isBaseline = item.CustomerId == baseline.CustomerId;
+			var normalizedEmail = (item.Email ?? string.Empty).Trim().ToLowerInvariant();
+			var normalizedCompany = (item.CompanyName ?? string.Empty).Trim().ToLowerInvariant();
+			var normalizedTier = (item.AccountTier ?? string.Empty).Trim().ToLowerInvariant();
+
+			var emailSignal = isBaseline ? "BASELINE" : (normalizedEmail == baselineEmail ? "MATCH" : "DIFF");
+			var companySignal = isBaseline ? "BASELINE" : (normalizedCompany == baselineCompany ? "MATCH" : "DIFF");
+			var tierSignal = isBaseline ? "BASELINE" : (normalizedTier == baselineTier ? "MATCH" : "DIFF");
+			var rowRole = isBaseline ? "baseline" : "candidate";
+
+			return new DuplicateComparisonRow
+			{
+				CustomerId = item.CustomerId,
+				RowRole = rowRole,
+				ComparedToCustomerId = baseline.CustomerId,
+				CompanyName = item.CompanyName ?? string.Empty,
+				Email = item.Email,
+				AccountTier = item.AccountTier,
+				EmailSignal = emailSignal,
+				CompanySignal = companySignal,
+				TierSignal = tierSignal,
+				HighlightSummary = isBaseline
+					? "Baseline row for this group"
+					: $"vs {baseline.CustomerId} -> Email: {emailSignal} | Company: {companySignal} | Tier: {tierSignal}",
+			};
+		}).ToList();
+
+		Replace(SelectedDuplicateComparisonRows, comparisonRows);
+		SelectedComparisonTitle = $"Quick comparison - Group {selectedGroup.DuplicateGroup} ({selectedGroup.CandidateCount} candidates)";
+	}
+
+	private void SetSelectedMergeDecision(string decision)
+	{
+		try
+		{
+			if (SelectedDuplicateReviewItem is null)
+			{
+				StatusMessage = "Select a duplicate group in Review Queue first.";
+				return;
+			}
+
+			SelectedDuplicateReviewItem.DecisionStatus = decision;
+			SelectedDuplicateReviewItem.DecisionNote = $"{decision} at {DateTime.UtcNow:O}";
+
+			_service.AppendAuditEvent(
+				OutputDirectory,
+				Actor,
+				decision == "approved" ? "approved_merge_candidate" : "rejected_merge_candidate",
+				$"duplicate_group_{SelectedDuplicateReviewItem.DuplicateGroup}",
+				new Dictionary<string, object>
+				{
+					["duplicate_group"] = SelectedDuplicateReviewItem.DuplicateGroup,
+					["candidate_count"] = SelectedDuplicateReviewItem.CandidateCount,
+					["confidence_score"] = SelectedDuplicateReviewItem.ConfidenceScore,
+					["confidence_label"] = SelectedDuplicateReviewItem.ConfidenceLabel,
+					["risk_label"] = SelectedDuplicateReviewItem.RiskLabel,
+					["decision_status"] = SelectedDuplicateReviewItem.DecisionStatus,
+				});
+
+			OnPropertyChanged(nameof(PendingReviewCount));
+			OnPropertyChanged(nameof(ApprovedReviewCount));
+			OnPropertyChanged(nameof(RejectedReviewCount));
+			StatusMessage = $"Duplicate group {SelectedDuplicateReviewItem.DuplicateGroup} marked {decision}.";
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Failed to apply merge decision: {ex.Message}";
+		}
 	}
 
 	private static void Replace<T>(ObservableCollection<T> collection, IEnumerable<T> items)

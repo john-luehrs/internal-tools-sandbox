@@ -1,66 +1,106 @@
 """Seed finance database (customers + invoices)."""
-import os
-import sqlite3
+from pathlib import Path
 import random
+import sqlite3
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "../db/finance.db")
-
-NAMES = ["Acme Corp", "Globex Inc", "Initech LLC", "Umbrella Co", "Initech LLC",
-         "Acme Corp", "Wayne Enterprises", "Stark Industries", "Globex Inc", "Pied Piper"]
-DOMAINS = ["acmecorp.com", "globex.net", "initech.org", "umbrella.co", "waynecorp.com"]
-
-# Intentional data quality issues
-RAW_AMOUNTS = ["1200.00", "$1,450.50", "950", "£820.00", "2,100.75", "invalid",
-               "1750.00", "$3,200", "870.25", None, "1,050.00", "$420.99"]
+DB_PATH = Path(__file__).resolve().parent.parent / "db" / "finance.db"
 
 DEFAULT_TIERS = ["enterprise", "mid-market", "smb"]
+INVOICE_CURRENCIES = ["USD", "GBP", "EUR"]
+INVOICE_STATUSES = ["paid", "pending", "overdue"]
 
 
-def _clean_customer_rows(start_id: int, count: int):
+def _clean_customer_rows(start_id: int, count: int) -> list[tuple[int, str, str, str]]:
     """Generate non-duplicate customers with unique billing emails."""
-    rows = []
+    rows: list[tuple[int, str, str, str]] = []
     for offset in range(count):
         customer_id = start_id + offset
         rows.append((
             customer_id,
-            f"CleanCo {offset + 1:02d}",
-            f"billing.clean.{offset + 1:02d}@cleanco.example",
+            f"Clearwater Systems {offset + 1:02d}",
+            f"billing.clearwater.{offset + 1:02d}@clearwater.example",
             DEFAULT_TIERS[offset % len(DEFAULT_TIERS)],
         ))
     return rows
 
 
-def _clean_invoice_rows(start_invoice_id: int, customer_ids):
-    """Generate valid invoices that should normalize cleanly."""
-    rows = []
-    for offset, customer_id in enumerate(customer_ids):
-        invoice_id = start_invoice_id + offset
-        amount_raw = f"{1250 + (offset * 37):.2f}"
+def _duplicate_customer_rows(start_id: int) -> list[tuple[int, str, str, str]]:
+    """Generate realistic duplicate scenarios.
+
+    Distribution in this block:
+    - 2 true-merge pairs (exact same company + tier + email)
+    - 4 ambiguous pairs (same billing inbox but org attributes vary)
+    """
+    rows = [
+        # True merges
+        (start_id, "Northstar Labs", "billing@northstarlabs.com", "smb"),
+        (start_id + 1, "Northstar Labs", "billing@northstarlabs.com", "smb"),
+        (start_id + 2, "Harbor Logistics", "ar@harborlogistics.com", "mid-market"),
+        (start_id + 3, "Harbor Logistics", "ar@harborlogistics.com", "mid-market"),
+        # Ambiguous duplicate candidates
+        (start_id + 4, "Acme Corp", "billing@acmecorp.com", "enterprise"),
+        (start_id + 5, "Acme Corporation", "billing@acmecorp.com", "enterprise"),
+        (start_id + 6, "Globex Inc", "finance@globex.com", "smb"),
+        (start_id + 7, "Globex UK Ltd", "finance@globex.com", "enterprise"),
+        (start_id + 8, "Orion Holdings", "billing@orionholdings.com", "mid-market"),
+        (start_id + 9, "Orion Health", "billing@orionholdings.com", "mid-market"),
+        (start_id + 10, "Redwood Group LLC", "ap@redwoodgroup.com", "mid-market"),
+        (start_id + 11, "Redwood Consulting", "ap@redwoodgroup.com", "mid-market"),
+    ]
+    return rows
+
+
+def _invoice_rows_for_customers(customer_ids: list[int], start_invoice_id: int) -> list[tuple[int, int, str | None, str, str, str]]:
+    """Generate mostly clean invoices with a small, realistic exception set."""
+    rng = random.Random(17)
+    rows: list[tuple[int, int, str | None, str, str, str]] = []
+    invoice_id = start_invoice_id
+
+    for index, customer_id in enumerate(customer_ids):
+        amount = 900 + (index * 43)
+        amount_raw = f"{amount:.2f}" if index % 3 else f"${amount:,.2f}"
         rows.append((
             invoice_id,
             customer_id,
             amount_raw,
+            rng.choice(INVOICE_CURRENCIES),
+            rng.choice(INVOICE_STATUSES),
+            f"2025-{((index % 12) + 1):02d}-{((index % 27) + 1):02d}",
+        ))
+        invoice_id += 1
+
+    # Explicit exception set for review queue coverage.
+    exceptions = ["invalid", "N/A", None, ""]
+    for offset, raw_amount in enumerate(exceptions):
+        rows.append((
+            invoice_id + offset,
+            customer_ids[offset % len(customer_ids)],
+            raw_amount,
             "USD",
             "pending",
-            f"2025-{((offset % 12) + 1):02d}-{((offset % 27) + 1):02d}",
+            f"2025-12-{(offset + 1):02d}",
         ))
+
     return rows
 
 
-def seed_finance():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+def seed_finance() -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("DROP TABLE IF EXISTS customers")
     conn.execute("DROP TABLE IF EXISTS invoices")
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE customers (
             customer_id INTEGER PRIMARY KEY,
             company_name TEXT,
             email TEXT,
             account_tier TEXT
         )
-    """)
-    conn.execute("""
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE invoices (
             invoice_id INTEGER PRIMARY KEY,
             customer_id INTEGER,
@@ -69,37 +109,17 @@ def seed_finance():
             status TEXT,
             due_date TEXT
         )
-    """)
-    # Customers — with intentional duplicates for detection behavior
-    customers = []
-    for i in range(1, 16):
-        name = random.choice(NAMES)
-        domain = random.choice(DOMAINS)
-        email = f"billing@{domain}"
-        # Inject duplicates: some share the same email
-        customers.append((i, name, email, random.choice(DEFAULT_TIERS)))
+        """
+    )
 
-    # Add clean non-duplicate customers so demo includes non-flagged records.
-    clean_customers = _clean_customer_rows(start_id=16, count=20)
-    customers.extend(clean_customers)
+    clean_customers = _clean_customer_rows(start_id=1, count=28)
+    duplicate_customers = _duplicate_customer_rows(start_id=29)
+    customers = clean_customers + duplicate_customers
+
+    invoice_customer_ids = [row[0] for row in customers]
+    invoices = _invoice_rows_for_customers(invoice_customer_ids, start_invoice_id=1)
+
     conn.executemany("INSERT INTO customers VALUES (?, ?, ?, ?)", customers)
-
-    # Invoices — intentional data quality issues
-    invoices = []
-    for i in range(1, 26):
-        invoices.append((
-            i,
-            random.randint(1, 15),
-            random.choice(RAW_AMOUNTS),
-            random.choice(["USD", "GBP", "EUR"]),
-            random.choice(["paid", "pending", "overdue"]),
-            f"2025-{random.randint(1,12):02d}-{random.randint(1,28):02d}",
-        ))
-
-    # Add clean invoices mapped to clean customers.
-    clean_customer_ids = [row[0] for row in clean_customers]
-    invoices.extend(_clean_invoice_rows(start_invoice_id=26, customer_ids=clean_customer_ids))
-
     conn.executemany("INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?)", invoices)
     conn.commit()
     conn.close()
@@ -107,4 +127,4 @@ def seed_finance():
 
 if __name__ == "__main__":
     seed_finance()
-    print("finance.db seeded.")
+    print("finance.db seeded with realistic profile (clean + ambiguous + true-merge).")
