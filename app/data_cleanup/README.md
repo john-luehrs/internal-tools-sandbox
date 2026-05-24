@@ -13,11 +13,24 @@
 
 Current status: this tool is not part of the active web platform release.
 
-Requires `db/finance.db` from the sandbox root. If needed, run `py scripts/bootstrap.py` first.
+Requires `db/finance.db` from the sandbox root.
 
 ### Prerequisites
 
 - .NET SDK 8.x (`dotnet --version`)
+- Python environment for sandbox data setup (`py -m venv .venv` + `pip install -r requirements.txt`)
+
+### Data setup
+
+From repo root:
+
+```bash
+# One-time setup for sandbox DBs and baseline data
+py scripts/bootstrap.py
+
+# Optional: regenerate Tool 5 dataset with realistic clean/ambiguous/true-merge distribution
+py scripts/seed_finance.py
+```
 
 ### Desktop App (Avalonia)
 

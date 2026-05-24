@@ -26,7 +26,7 @@ This sandbox simulates realistic business friction, internal APIs, synthetic dat
 
 ```
 internal-tools-sandbox/
-  app/                  # Python tool modules and domain logic assets
+  app/                  # Tool modules and domain logic assets (Python + .NET)
     support_dashboard/
     qa_analyzer/
     onboarding/
@@ -96,6 +96,12 @@ If Turbopack becomes unstable in your environment, continue using `npm run dev -
 ```bash
 # Prerequisite: .NET SDK 8.x
 dotnet --version
+
+# Ensure sandbox data exists (one-time bootstrap)
+py scripts/bootstrap.py
+
+# Optional: reseed Tool 5 dataset with realistic duplicate scenarios
+py scripts/seed_finance.py
 
 # Launch Tool 5
 dotnet run --project app/data_cleanup
