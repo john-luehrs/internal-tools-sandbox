@@ -11,4 +11,6 @@ public sealed class CleanupRunResult
     public string DuplicatesPath { get; init; } = string.Empty;
     public string InvoicesPath { get; init; } = string.Empty;
     public string SummaryPath { get; init; } = string.Empty;
+    public string ArActionReportPath { get; init; } = string.Empty;
+    public string ArLeadDigestPath { get; init; } = string.Empty;
 }

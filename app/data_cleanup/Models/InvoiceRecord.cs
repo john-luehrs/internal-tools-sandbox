@@ -8,4 +8,5 @@ public sealed class InvoiceRecord
     public string? Currency { get; init; }
     public string? Status { get; init; }
     public string? DueDate { get; init; }
+    public string? CreatedBy { get; init; }
 }

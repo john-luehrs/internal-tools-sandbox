@@ -19,6 +19,15 @@
         <Grid.Styles>
             <Style Selector="DataGrid">
                 <Setter Property="RowBackground" Value="White" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="GridLinesVisibility" Value="All" />
+            </Style>
+            <Style Selector="DataGridColumnHeader">
+                <Setter Property="Padding" Value="6,4" />
+                <Setter Property="FontSize" Value="11" />
+            </Style>
+            <Style Selector="DataGridCell">
+                <Setter Property="Padding" Value="6,3" />
             </Style>
             <Style Selector="DataGridRow:nth-child(odd)">
                 <Setter Property="Background" Value="White" />
@@ -137,24 +146,52 @@
             </TabItem>
 
             <TabItem Header="3. Review Queue">
-                <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,*,Auto,*" Margin="8">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*,Auto,Auto,*" Margin="8">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="Queue Duplicate Candidates" Command="{Binding FlagDuplicateReviewCommand}" />
                         <Button Content="Approve Selected Merge" Command="{Binding ApproveSelectedMergeCommand}" />
+                        <Button Content="Resolve Selected" Command="{Binding ResolveSelectedItemCommand}" />
                         <Button Content="Reject Selected Merge" Command="{Binding RejectSelectedMergeCommand}" />
-                        <Button Content="Flag Invoice Exceptions" Command="{Binding FlagInvoiceExceptionsCommand}" />
+                        <Button Content="Export Action Template" Command="{Binding ExportActionTemplateCommand}" />
                     </StackPanel>
 
-                    <TextBlock Grid.Row="1" Margin="0,8,0,0" Foreground="#5F708A" Text="{Binding PendingReviewCount, StringFormat='Pending duplicate merge reviews: {0}'}" />
-                    <TextBlock Grid.Row="2" Foreground="#5F708A" Text="{Binding ApprovedReviewCount, StringFormat='Approved: {0}'}" />
+                    <Grid Grid.Row="1" ColumnDefinitions="Auto,220,Auto,170,Auto" Margin="0,8,0,0">
+                        <TextBlock VerticalAlignment="Center" Text="Owner" />
+                        <TextBox Grid.Column="1" Text="{Binding AssignmentOwner}" />
+                        <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="12,0,0,0" Text="Team" />
+                        <TextBox Grid.Column="3" Text="{Binding AssignmentTeam}" Margin="8,0,0,0" />
+                        <Button Grid.Column="4" Content="Assign Selected" Command="{Binding AssignSelectedOwnerCommand}" Margin="12,0,0,0" />
+                    </Grid>
 
-                    <DataGrid Grid.Row="3" Margin="0,8,0,8" ItemsSource="{Binding DuplicateReviewQueue}" SelectedItem="{Binding SelectedDuplicateReviewItem}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding ShowRejectReasonPrompt}">
+                        <TextBlock VerticalAlignment="Center" Text="Reject Reason (required)" FontWeight="SemiBold" Foreground="#8A4A3D" />
+                        <TextBox Grid.Column="1" Margin="12,0,0,0" Text="{Binding ReviewNotes}" Watermark="Type rejection reason here before clicking Reject Selected Merge" />
+                    </Grid>
 
-                    <TextBlock Grid.Row="4" Margin="0,2,0,0" FontWeight="SemiBold" Text="{Binding SelectedComparisonTitle}" />
-                    <DataGrid Grid.Row="5" Margin="0,6,0,8" ItemsSource="{Binding SelectedDuplicateComparisonRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="3" Margin="0,8,0,0" Foreground="#5F708A" Text="{Binding PendingReviewCount, StringFormat='Pending: {0}'}" />
+                    <TextBlock Grid.Row="3" Margin="140,8,0,0" Foreground="#5F708A" Text="{Binding InReviewCount, StringFormat='In Review: {0}'}" />
+                    <TextBlock Grid.Row="3" Margin="300,8,0,0" Foreground="#5F708A" Text="{Binding ApprovedReviewCount, StringFormat='Approved: {0}'}" />
+                    <TextBlock Grid.Row="3" Margin="460,8,0,0" Foreground="#5F708A" Text="{Binding ResolvedCount, StringFormat='Resolved: {0}'}" />
+                    <TextBlock Grid.Row="3" Margin="620,8,0,0" Foreground="#5F708A" Text="{Binding RejectedReviewCount, StringFormat='Rejected: {0}'}" />
+                    <TextBlock Grid.Row="3" Margin="790,8,0,0" Foreground="#5F708A" Text="{Binding ClosureRateDisplay, StringFormat='Closure Rate: {0}'}" />
 
-                    <TextBlock Grid.Row="6" Foreground="#5F708A" Text="{Binding InvoiceInvalidCount, StringFormat='Invalid invoice exceptions pending review: {0}'}" />
-                    <DataGrid Grid.Row="7" ItemsSource="{Binding InvalidInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="4" Margin="0,4,0,0" Foreground="#5F708A" Text="{Binding AnalysisRunCount, StringFormat='Rerun Count: {0}'}" />
+                    <TextBlock Grid.Row="4" Margin="180,4,0,0" Foreground="#5F708A" Text="{Binding LastAnalysisRunUtc, StringFormat='Last Rerun (UTC): {0}'}" />
+                    <TextBlock Grid.Row="4" Margin="640,4,0,0" Foreground="#5F708A" Text="{Binding LastActionExportPath, StringFormat='Last Export: {0}'}" TextWrapping="Wrap" />
+
+                    <DataGrid Grid.Row="5" Margin="0,8,0,8" ItemsSource="{Binding DuplicateReviewQueue}" SelectedItem="{Binding SelectedDuplicateReviewItem}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnReviewQueueAutoGeneratingColumn" VerticalAlignment="Stretch" />
+
+                    <TextBlock Grid.Row="6" Margin="0,2,0,0" FontWeight="SemiBold" Text="{Binding SelectedComparisonTitle}" />
+                    <DataGrid Grid.Row="7" Margin="0,6,0,8" ItemsSource="{Binding SelectedDuplicateComparisonRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+
+                    <StackPanel Grid.Row="8" Orientation="Horizontal" Spacing="8">
+                        <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Invoice Exception Actions" />
+                        <Button Content="Flag All Invoice Exceptions" Command="{Binding FlagInvoiceExceptionsCommand}" />
+                        <Button Content="Flag Selected Invoice" Command="{Binding FlagSelectedInvoiceCommand}" />
+                        <Button Content="Unflag Selected Invoice" Command="{Binding UnflagSelectedInvoiceCommand}" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="9" Foreground="#5F708A" Text="{Binding InvoiceInvalidCount, StringFormat='Invalid invoice exceptions pending review: {0}'}" />
+                    <DataGrid Grid.Row="10" ItemsSource="{Binding InvalidInvoiceRows}" SelectedItem="{Binding SelectedInvalidInvoice}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
                 </Grid>
             </TabItem>
 
@@ -179,11 +216,13 @@
                     </Grid>
 
                     <Border Grid.Row="4" CornerRadius="8" BorderBrush="#CCD7EA" BorderThickness="1" Padding="10" Margin="0,8,0,0" IsVisible="{Binding HasLatestRun}">
-                        <Grid RowDefinitions="Auto,Auto,Auto,Auto">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
                             <TextBlock FontWeight="SemiBold" Text="Latest Run" />
                             <TextBlock Grid.Row="1" Text="{Binding LatestRun.RunId, StringFormat='Run ID: {0}'}" />
                             <TextBlock Grid.Row="2" Text="{Binding LatestRun.DuplicatesPath, StringFormat='Duplicates: {0}'}" TextWrapping="Wrap" />
                             <TextBlock Grid.Row="3" Text="{Binding LatestRun.InvoicesPath, StringFormat='Invoices: {0}'}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="4" Text="{Binding LatestRun.ArActionReportPath, StringFormat='AR Action Report: {0}'}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="5" Text="{Binding LatestRun.ArLeadDigestPath, StringFormat='AR Lead Digest: {0}'}" TextWrapping="Wrap" />
                         </Grid>
                     </Border>
                 </Grid>

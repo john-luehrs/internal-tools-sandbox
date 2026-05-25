@@ -18,4 +18,16 @@ public partial class DuplicateReviewItem : ObservableObject
 
     [ObservableProperty]
     private string? _decisionNote;
+
+    [ObservableProperty]
+    private string _lifecycleState = "new";
+
+    [ObservableProperty]
+    private string? _ownerName;
+
+    [ObservableProperty]
+    private string _ownerTeam = "AR Ops";
+
+    [ObservableProperty]
+    private string _updatedUtc = string.Empty;
 }

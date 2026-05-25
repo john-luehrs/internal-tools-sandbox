@@ -57,8 +57,12 @@ public sealed class DataCleanupService
 		using var connection = new SqliteConnection($"Data Source={dbPath}");
 		connection.Open();
 
+		var hasCreatedBy = HasColumn(connection, "invoices", "created_by");
+
 		using var command = connection.CreateCommand();
-		command.CommandText = "SELECT invoice_id, customer_id, amount_raw, currency, status, due_date FROM invoices";
+		command.CommandText = hasCreatedBy
+			? "SELECT invoice_id, customer_id, amount_raw, currency, status, due_date, created_by FROM invoices"
+			: "SELECT invoice_id, customer_id, amount_raw, currency, status, due_date, '' AS created_by FROM invoices";
 
 		using var reader = command.ExecuteReader();
 		while (reader.Read())
@@ -71,6 +75,7 @@ public sealed class DataCleanupService
 				Currency = reader.IsDBNull(3) ? null : reader.GetString(3),
 				Status = reader.IsDBNull(4) ? null : reader.GetString(4),
 				DueDate = reader.IsDBNull(5) ? null : reader.GetString(5),
+				CreatedBy = reader.IsDBNull(6) ? null : reader.GetString(6),
 			});
 		}
 
@@ -145,6 +150,95 @@ public sealed class DataCleanupService
 		return queue;
 	}
 
+	public IReadOnlyList<DuplicateReviewItem> ApplyWorkflowState(string outputDir, IEnumerable<DuplicateReviewItem> queue)
+	{
+		var path = ResolveWorkflowStatePath(outputDir);
+		if (!File.Exists(path))
+		{
+			return queue.ToList();
+		}
+
+		var json = File.ReadAllText(path);
+		var state = JsonSerializer.Deserialize<List<WorkflowStateRecord>>(json) ?? [];
+		var stateByGroup = state.ToDictionary(item => item.DuplicateGroup);
+
+		var merged = queue.Select(item =>
+		{
+			if (!stateByGroup.TryGetValue(item.DuplicateGroup, out var saved))
+			{
+				return item;
+			}
+
+			item.DecisionStatus = saved.DecisionStatus;
+			item.DecisionNote = saved.DecisionNote;
+			item.LifecycleState = saved.LifecycleState;
+			item.OwnerName = saved.OwnerName;
+			item.OwnerTeam = string.IsNullOrWhiteSpace(saved.OwnerTeam) ? "AR Ops" : saved.OwnerTeam;
+			item.UpdatedUtc = saved.UpdatedUtc ?? string.Empty;
+			return item;
+		}).ToList();
+
+		return merged;
+	}
+
+	public void SaveWorkflowState(string outputDir, IEnumerable<DuplicateReviewItem> queue)
+	{
+		Directory.CreateDirectory(outputDir);
+		var path = ResolveWorkflowStatePath(outputDir);
+		var payload = queue
+			.OrderBy(item => item.DuplicateGroup)
+			.Select(item => new WorkflowStateRecord
+			{
+				DuplicateGroup = item.DuplicateGroup,
+				NormalizedEmail = item.NormalizedEmail,
+				LifecycleState = item.LifecycleState,
+				DecisionStatus = item.DecisionStatus,
+				DecisionNote = item.DecisionNote,
+				OwnerName = item.OwnerName,
+				OwnerTeam = item.OwnerTeam,
+				UpdatedUtc = item.UpdatedUtc,
+			})
+			.ToList();
+
+		File.WriteAllText(path, JsonSerializer.Serialize(payload, new JsonSerializerOptions
+		{
+			WriteIndented = true,
+		}));
+	}
+
+	public string ExportActionTemplate(string outputDir, IEnumerable<DuplicateReviewItem> queue)
+	{
+		Directory.CreateDirectory(outputDir);
+		var exportDir = Path.Combine(outputDir, "action_exports");
+		Directory.CreateDirectory(exportDir);
+
+		var runId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ", CultureInfo.InvariantCulture);
+		var path = Path.Combine(exportDir, $"ar_actions_{runId}.csv");
+
+		var lines = new List<string>
+		{
+			"duplicate_group,normalized_email,candidate_count,lifecycle_state,owner_name,owner_team,confidence_label,risk_label,decision_status,decision_note,updated_utc"
+		};
+
+		lines.AddRange(queue
+			.OrderBy(item => item.DuplicateGroup)
+			.Select(item => string.Join(",",
+				item.DuplicateGroup,
+				EscapeCsv(item.NormalizedEmail),
+				item.CandidateCount,
+				EscapeCsv(item.LifecycleState),
+				EscapeCsv(item.OwnerName),
+				EscapeCsv(item.OwnerTeam),
+				EscapeCsv(item.ConfidenceLabel),
+				EscapeCsv(item.RiskLabel),
+				EscapeCsv(item.DecisionStatus),
+				EscapeCsv(item.DecisionNote),
+				EscapeCsv(item.UpdatedUtc))));
+
+		File.WriteAllLines(path, lines, Encoding.UTF8);
+		return path;
+	}
+
 	public IReadOnlyList<NormalizedInvoice> NormalizeInvoices(IEnumerable<InvoiceRecord> invoices)
 	{
 		var output = new List<NormalizedInvoice>();
@@ -156,10 +250,12 @@ public sealed class DataCleanupService
 			{
 				InvoiceId = invoice.InvoiceId,
 				CustomerId = invoice.CustomerId,
+				InvoiceAuthor = string.IsNullOrWhiteSpace(invoice.CreatedBy) ? "unknown_author" : invoice.CreatedBy.Trim(),
 				AmountRaw = invoice.AmountRaw,
 				AmountNormalized = normalized.Amount,
 				ParseStatus = normalized.ParseStatus,
 				FailureReason = normalized.FailureReason,
+				ReviewStatus = "unflagged",
 			});
 		}
 
@@ -171,7 +267,9 @@ public sealed class DataCleanupService
 		string outputDir,
 		string actor,
 		IReadOnlyList<DuplicateCandidate>? precomputedDuplicates = null,
-		IReadOnlyList<NormalizedInvoice>? precomputedInvoices = null)
+		IReadOnlyList<NormalizedInvoice>? precomputedInvoices = null,
+		IReadOnlyList<DuplicateReviewItem>? reviewQueue = null,
+		IReadOnlyList<NormalizedInvoice>? flaggedInvoices = null)
 	{
 		Directory.CreateDirectory(outputDir);
 
@@ -188,26 +286,106 @@ public sealed class DataCleanupService
 		var duplicatesPath = Path.Combine(outputDir, $"duplicates_{runId}.csv");
 		var invoicesPath = Path.Combine(outputDir, $"invoice_normalization_{runId}.csv");
 		var summaryPath = Path.Combine(outputDir, $"summary_{runId}.json");
+		var arLeadDigestPath = Path.Combine(outputDir, $"ar_lead_digest_{runId}.md");
+
+		var reviewRows = reviewQueue?.ToList() ?? BuildDuplicateReviewQueue(duplicates).ToList();
+		var invoiceRowsForRouting = flaggedInvoices?.ToList() ?? normalizedInvoices
+			.Where(item => item.ParseStatus == "invalid" && item.ReviewStatus == "flagged")
+			.ToList();
+		var arActionReportPath = ExportActionTemplate(outputDir, reviewRows);
 
 		WriteDuplicateCsv(duplicatesPath, duplicates);
 		WriteInvoiceCsv(invoicesPath, normalizedInvoices);
+
+		var mergeCandidates = reviewRows
+			.Where(item => item.DecisionStatus == "approved" || item.LifecycleState == "approved")
+			.Select(item => new
+			{
+				duplicate_group = item.DuplicateGroup,
+				customer_ids = ParseCustomerIds(item.CustomerIds),
+				normalized_email = item.NormalizedEmail,
+				ar_assignee = item.OwnerName ?? "unassigned",
+				confidence_label = item.ConfidenceLabel,
+				risk_label = item.RiskLabel,
+				state = item.LifecycleState,
+			})
+			.ToList();
+
+		var rejectedCandidates = reviewRows
+			.Where(item => item.DecisionStatus == "rejected" || item.LifecycleState == "rejected")
+			.Select(item => new
+			{
+				duplicate_group = item.DuplicateGroup,
+				customer_ids = ParseCustomerIds(item.CustomerIds),
+				reason = string.IsNullOrWhiteSpace(item.DecisionNote) ? "manual_review_required" : item.DecisionNote,
+				assignee_candidate = item.OwnerName ?? "unassigned",
+				state = item.LifecycleState,
+			})
+			.ToList();
+
+		var flaggedInvoiceAssignments = invoiceRowsForRouting
+			.Where(item => item.ReviewStatus == "flagged")
+			.Select(item => new
+			{
+				invoice_id = item.InvoiceId,
+				customer_id = item.CustomerId,
+				assignee = string.IsNullOrWhiteSpace(item.ReviewOwner) ? "unassigned" : item.ReviewOwner,
+				invoice_author = item.InvoiceAuthor,
+				failure_reason = item.FailureReason,
+				review_status = item.ReviewStatus,
+			})
+			.ToList();
 
 		var summary = new
 		{
 			run_id = runId,
 			db_path = dbPath,
-			duplicate_count = duplicateCount,
-			invoice_total = invoiceTotal,
-			invoice_normalized_count = invoiceNormalizedCount,
-			invoice_invalid_count = invoiceInvalidCount,
-			invoice_empty_count = invoiceEmptyCount,
 			actor,
+			overall_picture = new
+			{
+				duplicate_count = duplicateCount,
+				invoice_total = invoiceTotal,
+				invoice_normalized_count = invoiceNormalizedCount,
+				invoice_invalid_count = invoiceInvalidCount,
+				invoice_empty_count = invoiceEmptyCount,
+				review_queue_total = reviewRows.Count,
+				merge_candidates_count = mergeCandidates.Count,
+				rejected_candidates_count = rejectedCandidates.Count,
+				flagged_invoices_count = flaggedInvoiceAssignments.Count,
+			},
+			ar_routing = new
+			{
+				merge_candidates = mergeCandidates,
+				rejected_candidates = rejectedCandidates,
+				flagged_invoices = flaggedInvoiceAssignments,
+			},
+			artifacts = new
+			{
+				duplicates_path = duplicatesPath,
+				invoices_path = invoicesPath,
+				ar_action_report_path = arActionReportPath,
+				ar_lead_digest_path = arLeadDigestPath,
+			},
 		};
 
 		File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions
 		{
 			WriteIndented = true,
 		}));
+
+		WriteArLeadDigest(
+			arLeadDigestPath,
+			runId,
+			actor,
+			duplicateCount,
+			invoiceTotal,
+			invoiceInvalidCount,
+			invoiceEmptyCount,
+			mergeCandidates,
+			rejectedCandidates,
+			flaggedInvoiceAssignments,
+			arActionReportPath,
+			summaryPath);
 
 		AppendAuditEvent(outputDir, actor, "data_cleanup_run", runId, new Dictionary<string, object>
 		{
@@ -227,6 +405,8 @@ public sealed class DataCleanupService
 			DuplicatesPath = duplicatesPath,
 			InvoicesPath = invoicesPath,
 			SummaryPath = summaryPath,
+			ArActionReportPath = arActionReportPath,
+			ArLeadDigestPath = arLeadDigestPath,
 		};
 	}
 
@@ -377,16 +557,20 @@ public sealed class DataCleanupService
 	{
 		var lines = new List<string>
 		{
-			"invoice_id,customer_id,amount_raw,amount_normalized,parse_status,failure_reason"
+			"invoice_id,customer_id,invoice_author,amount_raw,amount_normalized,parse_status,failure_reason,review_status,review_owner,review_updated_utc"
 		};
 
 		lines.AddRange(rows.Select(row => string.Join(",",
 			row.InvoiceId,
 			row.CustomerId,
+			EscapeCsv(row.InvoiceAuthor),
 			EscapeCsv(row.AmountRaw),
 			row.AmountNormalized?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
 			EscapeCsv(row.ParseStatus),
-			EscapeCsv(row.FailureReason))));
+			EscapeCsv(row.FailureReason),
+			EscapeCsv(row.ReviewStatus),
+			EscapeCsv(row.ReviewOwner),
+			EscapeCsv(row.ReviewUpdatedUtc))));
 
 		File.WriteAllLines(path, lines, Encoding.UTF8);
 	}
@@ -405,6 +589,148 @@ public sealed class DataCleanupService
 		}
 
 		return escaped;
+	}
+
+	private static bool HasColumn(SqliteConnection connection, string tableName, string columnName)
+	{
+		using var command = connection.CreateCommand();
+		command.CommandText = $"PRAGMA table_info({tableName})";
+
+		using var reader = command.ExecuteReader();
+		while (reader.Read())
+		{
+			if (reader.IsDBNull(1))
+			{
+				continue;
+			}
+
+			var currentColumn = reader.GetString(1);
+			if (string.Equals(currentColumn, columnName, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static string ResolveWorkflowStatePath(string outputDir)
+	{
+		return Path.Combine(outputDir, "workflow_state.json");
+	}
+
+	private static IReadOnlyList<long> ParseCustomerIds(string customerIds)
+	{
+		if (string.IsNullOrWhiteSpace(customerIds))
+		{
+			return [];
+		}
+
+		return customerIds
+			.Split(',')
+			.Select(item => item.Trim())
+			.Where(item => long.TryParse(item, out _))
+			.Select(long.Parse)
+			.ToList();
+	}
+
+	private static void WriteArLeadDigest(
+		string path,
+		string runId,
+		string actor,
+		int duplicateCount,
+		int invoiceTotal,
+		int invoiceInvalidCount,
+		int invoiceEmptyCount,
+		IReadOnlyList<object> mergeCandidates,
+		IReadOnlyList<object> rejectedCandidates,
+		IReadOnlyList<object> flaggedInvoices,
+		string actionReportPath,
+		string summaryPath)
+	{
+		var lines = new List<string>
+		{
+			"# AR Lead Data Cleanup Digest",
+			string.Empty,
+			$"Run ID: {runId}",
+			$"Actor: {actor}",
+			$"Generated UTC: {DateTime.UtcNow:O}",
+			string.Empty,
+			"## Overall Picture",
+			$"- Duplicate rows detected: {duplicateCount}",
+			$"- Invoice rows analyzed: {invoiceTotal}",
+			$"- Invalid invoice parses: {invoiceInvalidCount}",
+			$"- Empty invoice amounts: {invoiceEmptyCount}",
+			string.Empty,
+			"## Merge Candidate Customer IDs and AR Assignee",
+			$"- Candidate groups count: {mergeCandidates.Count}",
+			string.Empty,
+			"## Rejected Customer IDs, Reason, and Assignee Candidate",
+			$"- Rejected groups count: {rejectedCandidates.Count}",
+			string.Empty,
+			"## Flagged Invoice Numbers and Assignee",
+			$"- Flagged invoices count: {flaggedInvoices.Count}",
+			string.Empty,
+			"## Artifact Paths",
+			$"- AR action report: {actionReportPath}",
+			$"- Structured summary: {summaryPath}",
+		};
+
+		lines.Add(string.Empty);
+		lines.Add("### Merge Candidate Details");
+		if (mergeCandidates.Count == 0)
+		{
+			lines.Add("- None");
+		}
+		else
+		{
+			foreach (var item in mergeCandidates)
+			{
+				lines.Add($"- {JsonSerializer.Serialize(item)}");
+			}
+		}
+
+		lines.Add(string.Empty);
+		lines.Add("### Rejected Candidate Details");
+		if (rejectedCandidates.Count == 0)
+		{
+			lines.Add("- None");
+		}
+		else
+		{
+			foreach (var item in rejectedCandidates)
+			{
+				lines.Add($"- {JsonSerializer.Serialize(item)}");
+			}
+		}
+
+		lines.Add(string.Empty);
+		lines.Add("### Flagged Invoice Details");
+		if (flaggedInvoices.Count == 0)
+		{
+			lines.Add("- None");
+		}
+		else
+		{
+			foreach (var item in flaggedInvoices)
+			{
+				lines.Add($"- {JsonSerializer.Serialize(item)}");
+			}
+		}
+
+		File.WriteAllLines(path, lines, Encoding.UTF8);
+	}
+
+	private sealed class WorkflowStateRecord
+	{
+		public int DuplicateGroup { get; init; }
+		public string NormalizedEmail { get; init; } = string.Empty;
+		public string LifecycleState { get; init; } = "new";
+		public string DecisionStatus { get; init; } = "pending";
+		public string? DecisionNote { get; init; }
+		public string? OwnerName { get; init; }
+		public string OwnerTeam { get; init; } = "AR Ops";
+		public string? UpdatedUtc { get; init; }
 	}
 
 	private static string ResolveWorkspaceRoot()

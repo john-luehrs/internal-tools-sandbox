@@ -8,6 +8,13 @@ DB_PATH = Path(__file__).resolve().parent.parent / "db" / "finance.db"
 DEFAULT_TIERS = ["enterprise", "mid-market", "smb"]
 INVOICE_CURRENCIES = ["USD", "GBP", "EUR"]
 INVOICE_STATUSES = ["paid", "pending", "overdue"]
+INVOICE_AUTHORS = [
+    "ava.johnson",
+    "liam.carter",
+    "maya.patel",
+    "noah.kim",
+    "zoe.hughes",
+]
 
 
 def _clean_customer_rows(start_id: int, count: int) -> list[tuple[int, str, str, str]]:
@@ -50,10 +57,10 @@ def _duplicate_customer_rows(start_id: int) -> list[tuple[int, str, str, str]]:
     return rows
 
 
-def _invoice_rows_for_customers(customer_ids: list[int], start_invoice_id: int) -> list[tuple[int, int, str | None, str, str, str]]:
+def _invoice_rows_for_customers(customer_ids: list[int], start_invoice_id: int) -> list[tuple[int, int, str | None, str, str, str, str]]:
     """Generate mostly clean invoices with a small, realistic exception set."""
     rng = random.Random(17)
-    rows: list[tuple[int, int, str | None, str, str, str]] = []
+    rows: list[tuple[int, int, str | None, str, str, str, str]] = []
     invoice_id = start_invoice_id
 
     for index, customer_id in enumerate(customer_ids):
@@ -66,6 +73,7 @@ def _invoice_rows_for_customers(customer_ids: list[int], start_invoice_id: int) 
             rng.choice(INVOICE_CURRENCIES),
             rng.choice(INVOICE_STATUSES),
             f"2025-{((index % 12) + 1):02d}-{((index % 27) + 1):02d}",
+            INVOICE_AUTHORS[index % len(INVOICE_AUTHORS)],
         ))
         invoice_id += 1
 
@@ -79,6 +87,7 @@ def _invoice_rows_for_customers(customer_ids: list[int], start_invoice_id: int) 
             "USD",
             "pending",
             f"2025-12-{(offset + 1):02d}",
+            INVOICE_AUTHORS[(offset + 1) % len(INVOICE_AUTHORS)],
         ))
 
     return rows
@@ -107,7 +116,8 @@ def seed_finance() -> None:
             amount_raw TEXT,
             currency TEXT,
             status TEXT,
-            due_date TEXT
+            due_date TEXT,
+            created_by TEXT
         )
         """
     )
@@ -120,7 +130,7 @@ def seed_finance() -> None:
     invoices = _invoice_rows_for_customers(invoice_customer_ids, start_invoice_id=1)
 
     conn.executemany("INSERT INTO customers VALUES (?, ?, ?, ?)", customers)
-    conn.executemany("INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?)", invoices)
+    conn.executemany("INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?, ?)", invoices)
     conn.commit()
     conn.close()
 
