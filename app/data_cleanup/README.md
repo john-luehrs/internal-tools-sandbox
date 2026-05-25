@@ -43,7 +43,7 @@ dotnet run --project app/data_cleanup
 
 1. Data Profile: inspect customer and invoice source rows
 2. Candidate Analysis: review duplicate candidates and invoice normalization outcomes
-3. Review Queue: queue duplicate candidates, inspect quick comparisons, and capture approve/reject merge decisions
+3. Review Queue: duplicate groups auto-enter `in_review`, assign AR ownership, approve/reject (reject requires inline reason), resolve, inspect quick comparisons, and export action templates
 4. Execute Run: generate deterministic report artifacts
 
 Artifacts are written locally to `reports/data_cleanup/` by default:
@@ -52,11 +52,23 @@ Artifacts are written locally to `reports/data_cleanup/` by default:
 - `invoice_normalization_<run_id>.csv`
 - `summary_<run_id>.json`
 - `audit_log.jsonl`
+- `action_exports/ar_actions_<run_id>.csv`
+- `ar_lead_digest_<run_id>.md`
+
+`summary_<run_id>.json` now includes:
+
+- overall picture metrics
+- merge candidate groups with AR assignee
+- rejected groups with reason + assignee candidate
+- flagged invoices with assignee (defaulted to invoice author)
 
 ### Notes
 
 - This implementation is Windows-first and source-run oriented for sandbox use.
 - Previous Python/Streamlit implementation has been moved to `app/data_cleanup/scratch/`.
 - Merge decisions in Update 1 capture review outcomes and audit events; physical database row merges are not executed in this phase.
+- Update 2 adds AR assignment and lifecycle tracking for demo workflow handoff.
+- Review queue state is session-scoped for demos and starts fresh on each analysis run.
+- Flagged invoice exceptions route to mocked invoice authors (`created_by`) as assignees.
 
 Use `py scripts/run_tool.py data_cleanup` for command guidance.

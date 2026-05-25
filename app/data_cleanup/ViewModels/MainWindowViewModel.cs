@@ -79,15 +79,44 @@ public partial class MainWindowViewModel : ViewModelBase
 	[ObservableProperty]
 	private string _selectedComparisonTitle;
 
+	[ObservableProperty]
+	private string _assignmentOwner;
+
+	[ObservableProperty]
+	private string _assignmentTeam;
+
+	[ObservableProperty]
+	private string _reviewNotes;
+
+	[ObservableProperty]
+	private bool _showRejectReasonPrompt;
+
+	[ObservableProperty]
+	private int _analysisRunCount;
+
+	[ObservableProperty]
+	private string _lastAnalysisRunUtc;
+
+	[ObservableProperty]
+	private string _lastActionExportPath;
+
+	[ObservableProperty]
+	private NormalizedInvoice? _selectedInvalidInvoice;
+
 	public bool HasLatestRun => LatestRun is not null;
 	public string DuplicateCountDisplay => AnalysisReady ? DuplicateCount.ToString() : "--";
 	public string DuplicateGroupCountDisplay => AnalysisReady ? DuplicateGroupCount.ToString() : "--";
 	public string InvoiceNormalizedCountDisplay => AnalysisReady ? InvoiceNormalizedCount.ToString() : "--";
 	public string InvoiceInvalidCountDisplay => AnalysisReady ? InvoiceInvalidCount.ToString() : "--";
 	public string InvoiceEmptyCountDisplay => AnalysisReady ? InvoiceEmptyCount.ToString() : "--";
-	public int PendingReviewCount => DuplicateReviewQueue.Count(item => item.DecisionStatus == "pending");
-	public int ApprovedReviewCount => DuplicateReviewQueue.Count(item => item.DecisionStatus == "approved");
-	public int RejectedReviewCount => DuplicateReviewQueue.Count(item => item.DecisionStatus == "rejected");
+	public int PendingReviewCount => DuplicateReviewQueue.Count(item => item.LifecycleState == "new");
+	public int ApprovedReviewCount => DuplicateReviewQueue.Count(item => item.LifecycleState == "approved");
+	public int RejectedReviewCount => DuplicateReviewQueue.Count(item => item.LifecycleState == "rejected");
+	public int InReviewCount => DuplicateReviewQueue.Count(item => item.LifecycleState == "in_review");
+	public int ResolvedCount => DuplicateReviewQueue.Count(item => item.LifecycleState == "resolved");
+	public string ClosureRateDisplay => DuplicateReviewQueue.Count == 0
+		? "0%"
+		: $"{(ResolvedCount * 100.0 / DuplicateReviewQueue.Count):0}%";
 
 	public MainWindowViewModel()
 	{
@@ -98,6 +127,12 @@ public partial class MainWindowViewModel : ViewModelBase
 		InvoicePreviewTitle = "Affected invoice preview";
 		CustomerPreviewTitle = "Customer records";
 		SelectedComparisonTitle = "Quick comparison (select a duplicate group)";
+		AssignmentOwner = "ar.analyst";
+		AssignmentTeam = "AR Ops";
+		ReviewNotes = string.Empty;
+		ShowRejectReasonPrompt = false;
+		LastAnalysisRunUtc = "--";
+		LastActionExportPath = "--";
 		StatusMessage = "Ready";
 
 		RefreshAnalysis();
@@ -160,7 +195,19 @@ public partial class MainWindowViewModel : ViewModelBase
 				.ToList();
 
 			Replace(DuplicateRows, duplicates);
-			Replace(DuplicateReviewQueue, _service.BuildDuplicateReviewQueue(duplicates));
+			var workflowQueue = _service.BuildDuplicateReviewQueue(duplicates);
+			foreach (var item in workflowQueue)
+			{
+				item.LifecycleState = "in_review";
+				item.DecisionStatus = "pending";
+
+				if (string.IsNullOrWhiteSpace(item.UpdatedUtc))
+				{
+					item.UpdatedUtc = DateTime.UtcNow.ToString("O");
+				}
+			}
+
+			Replace(DuplicateReviewQueue, workflowQueue);
 			Replace(NormalizedRows, normalized);
 			Replace(AffectedInvoiceRows, affectedInvoices);
 			Replace(DisplayedInvoiceRows, affectedInvoices);
@@ -174,12 +221,12 @@ public partial class MainWindowViewModel : ViewModelBase
 			InvoiceEmptyCount = normalized.Count(x => x.ParseStatus == "empty");
 			AnalysisReady = true;
 			InvoicePreviewTitle = "Affected invoice preview";
+			AnalysisRunCount++;
+			LastAnalysisRunUtc = DateTime.UtcNow.ToString("O");
 			SelectedDuplicateReviewItem = DuplicateReviewQueue.FirstOrDefault();
-			OnPropertyChanged(nameof(PendingReviewCount));
-			OnPropertyChanged(nameof(ApprovedReviewCount));
-			OnPropertyChanged(nameof(RejectedReviewCount));
+			RefreshWorkflowMetrics();
 
-			StatusMessage = "Candidate analysis complete.";
+			StatusMessage = "Candidate analysis complete. Duplicate groups were auto-set to in_review.";
 		}
 		catch (Exception ex)
 		{
@@ -262,46 +309,95 @@ public partial class MainWindowViewModel : ViewModelBase
 	}
 
 	[RelayCommand]
-	private void FlagDuplicateReview()
-	{
-		try
-		{
-			if (DuplicateReviewQueue.Count == 0)
-			{
-				StatusMessage = "No duplicate candidates found to queue.";
-				return;
-			}
-
-			_service.AppendAuditEvent(
-				OutputDirectory,
-				Actor,
-				"queued_duplicate_candidates",
-				"customer_batch",
-				new Dictionary<string, object>
-				{
-					["duplicate_count"] = DuplicateCount,
-					["duplicate_group_count"] = DuplicateGroupCount,
-					["pending_review_count"] = PendingReviewCount,
-				});
-
-			StatusMessage = "Duplicate candidates queued for merge review.";
-		}
-		catch (Exception ex)
-		{
-			StatusMessage = $"Failed to log duplicate review action: {ex.Message}";
-		}
-	}
-
-	[RelayCommand]
 	private void ApproveSelectedMerge()
 	{
-		SetSelectedMergeDecision("approved");
+		SetSelectedMergeDecision("approved", "approved");
 	}
 
 	[RelayCommand]
 	private void RejectSelectedMerge()
 	{
-		SetSelectedMergeDecision("rejected");
+		SetSelectedMergeDecision("rejected", "rejected");
+	}
+
+	[RelayCommand]
+	private void ResolveSelectedItem()
+	{
+		UpdateSelectedLifecycleState("resolved", "approved", "resolved_work_item", "resolved");
+	}
+
+	[RelayCommand]
+	private void AssignSelectedOwner()
+	{
+		try
+		{
+			if (SelectedDuplicateReviewItem is null)
+			{
+				StatusMessage = "Select a duplicate group to assign ownership.";
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(AssignmentOwner))
+			{
+				StatusMessage = "Provide an owner before assigning.";
+				return;
+			}
+
+			SelectedDuplicateReviewItem.OwnerName = AssignmentOwner.Trim();
+			SelectedDuplicateReviewItem.OwnerTeam = string.IsNullOrWhiteSpace(AssignmentTeam) ? "AR Ops" : AssignmentTeam.Trim();
+			SelectedDuplicateReviewItem.UpdatedUtc = DateTime.UtcNow.ToString("O");
+			if (SelectedDuplicateReviewItem.LifecycleState == "new")
+			{
+				SelectedDuplicateReviewItem.LifecycleState = "in_review";
+			}
+
+			_service.SaveWorkflowState(OutputDirectory, DuplicateReviewQueue);
+			_service.AppendAuditEvent(
+				OutputDirectory,
+				Actor,
+				"assigned_ar_owner",
+				$"duplicate_group_{SelectedDuplicateReviewItem.DuplicateGroup}",
+				new Dictionary<string, object>
+				{
+					["duplicate_group"] = SelectedDuplicateReviewItem.DuplicateGroup,
+					["owner_name"] = SelectedDuplicateReviewItem.OwnerName ?? string.Empty,
+					["owner_team"] = SelectedDuplicateReviewItem.OwnerTeam,
+					["lifecycle_state"] = SelectedDuplicateReviewItem.LifecycleState,
+				});
+
+			RefreshWorkflowMetrics();
+			StatusMessage = $"Group {SelectedDuplicateReviewItem.DuplicateGroup} assigned to {SelectedDuplicateReviewItem.OwnerName}.";
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Failed to assign ownership: {ex.Message}";
+		}
+	}
+
+	[RelayCommand]
+	private void ExportActionTemplate()
+	{
+		try
+		{
+			var path = _service.ExportActionTemplate(OutputDirectory, DuplicateReviewQueue);
+			LastActionExportPath = path;
+			_service.AppendAuditEvent(
+				OutputDirectory,
+				Actor,
+				"exported_action_template",
+				"duplicate_review_queue",
+				new Dictionary<string, object>
+				{
+					["export_path"] = path,
+					["record_count"] = DuplicateReviewQueue.Count,
+				});
+
+			StatusMessage = $"Action export generated: {path}";
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Failed to export action template: {ex.Message}";
+		}
 	}
 
 	[RelayCommand]
@@ -309,6 +405,20 @@ public partial class MainWindowViewModel : ViewModelBase
 	{
 		try
 		{
+			if (InvalidInvoiceRows.Count == 0)
+			{
+				StatusMessage = "No invalid invoices to flag.";
+				return;
+			}
+
+			var now = DateTime.UtcNow.ToString("O");
+			foreach (var row in InvalidInvoiceRows)
+			{
+				row.ReviewStatus = "flagged";
+				row.ReviewOwner = string.IsNullOrWhiteSpace(row.InvoiceAuthor) ? "unknown_author" : row.InvoiceAuthor;
+				row.ReviewUpdatedUtc = now;
+			}
+
 			_service.AppendAuditEvent(
 				OutputDirectory,
 				Actor,
@@ -318,13 +428,89 @@ public partial class MainWindowViewModel : ViewModelBase
 				{
 					["invoice_invalid_count"] = InvoiceInvalidCount,
 					["invoice_empty_count"] = InvoiceEmptyCount,
+					["review_status"] = "flagged",
+					["assignment_mode"] = "assign_to_invoice_author",
 				});
 
-			StatusMessage = "Invoice exception review queue event logged.";
+			StatusMessage = $"Flagged {InvalidInvoiceRows.Count} invalid invoices for review.";
 		}
 		catch (Exception ex)
 		{
 			StatusMessage = $"Failed to log invoice review action: {ex.Message}";
+		}
+	}
+
+	[RelayCommand]
+	private void FlagSelectedInvoice()
+	{
+		try
+		{
+			if (SelectedInvalidInvoice is null)
+			{
+				StatusMessage = "Select an invalid invoice row first.";
+				return;
+			}
+
+			var now = DateTime.UtcNow.ToString("O");
+			SelectedInvalidInvoice.ReviewStatus = "flagged";
+			SelectedInvalidInvoice.ReviewOwner = string.IsNullOrWhiteSpace(SelectedInvalidInvoice.InvoiceAuthor)
+				? "unknown_author"
+				: SelectedInvalidInvoice.InvoiceAuthor;
+			SelectedInvalidInvoice.ReviewUpdatedUtc = now;
+
+			_service.AppendAuditEvent(
+				OutputDirectory,
+				Actor,
+				"flagged_single_invoice_exception",
+				$"invoice_{SelectedInvalidInvoice.InvoiceId}",
+				new Dictionary<string, object>
+				{
+					["invoice_id"] = SelectedInvalidInvoice.InvoiceId,
+					["review_status"] = SelectedInvalidInvoice.ReviewStatus,
+				});
+
+			StatusMessage = $"Invoice {SelectedInvalidInvoice.InvoiceId} flagged for review.";
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Failed to flag selected invoice: {ex.Message}";
+		}
+	}
+
+	[RelayCommand]
+	private void UnflagSelectedInvoice()
+	{
+		try
+		{
+			if (SelectedInvalidInvoice is null)
+			{
+				StatusMessage = "Select an invalid invoice row first.";
+				return;
+			}
+
+			var now = DateTime.UtcNow.ToString("O");
+			SelectedInvalidInvoice.ReviewStatus = "unflagged";
+			SelectedInvalidInvoice.ReviewOwner = string.IsNullOrWhiteSpace(SelectedInvalidInvoice.InvoiceAuthor)
+				? "unknown_author"
+				: SelectedInvalidInvoice.InvoiceAuthor;
+			SelectedInvalidInvoice.ReviewUpdatedUtc = now;
+
+			_service.AppendAuditEvent(
+				OutputDirectory,
+				Actor,
+				"unflagged_single_invoice_exception",
+				$"invoice_{SelectedInvalidInvoice.InvoiceId}",
+				new Dictionary<string, object>
+				{
+					["invoice_id"] = SelectedInvalidInvoice.InvoiceId,
+					["review_status"] = SelectedInvalidInvoice.ReviewStatus,
+				});
+
+			StatusMessage = $"Invoice {SelectedInvalidInvoice.InvoiceId} unflagged.";
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Failed to unflag selected invoice: {ex.Message}";
 		}
 	}
 
@@ -338,7 +524,9 @@ public partial class MainWindowViewModel : ViewModelBase
 				outputDir: OutputDirectory,
 				actor: Actor,
 				precomputedDuplicates: DuplicateRows.ToList(),
-				precomputedInvoices: NormalizedRows.ToList());
+				precomputedInvoices: NormalizedRows.ToList(),
+				reviewQueue: DuplicateReviewQueue.ToList(),
+				flaggedInvoices: InvalidInvoiceRows.ToList());
 
 			LatestRun = result;
 			StatusMessage = $"Run complete: {result.RunId}";
@@ -403,12 +591,16 @@ public partial class MainWindowViewModel : ViewModelBase
 		{
 			Replace(SelectedDuplicateComparisonRows, []);
 			SelectedComparisonTitle = "Quick comparison (select a duplicate group)";
+			ReviewNotes = string.Empty;
+			ShowRejectReasonPrompt = false;
 			return;
 		}
 
 		PopulateSelectedDuplicateComparison(value);
+		ReviewNotes = value.DecisionNote ?? string.Empty;
+		ShowRejectReasonPrompt = false;
 
-		StatusMessage = $"Selected duplicate group {value.DuplicateGroup} ({value.CandidateCount} candidates).";
+		StatusMessage = $"Selected group {value.DuplicateGroup} | state: {value.LifecycleState} | owner: {value.OwnerName ?? "unassigned"}.";
 	}
 
 	private void PopulateSelectedDuplicateComparison(DuplicateReviewItem selectedGroup)
@@ -463,7 +655,7 @@ public partial class MainWindowViewModel : ViewModelBase
 		SelectedComparisonTitle = $"Quick comparison - Group {selectedGroup.DuplicateGroup} ({selectedGroup.CandidateCount} candidates)";
 	}
 
-	private void SetSelectedMergeDecision(string decision)
+	private void SetSelectedMergeDecision(string decision, string lifecycleState)
 	{
 		try
 		{
@@ -473,8 +665,22 @@ public partial class MainWindowViewModel : ViewModelBase
 				return;
 			}
 
+			if (decision == "rejected" && string.IsNullOrWhiteSpace(ReviewNotes))
+			{
+				ShowRejectReasonPrompt = true;
+				StatusMessage = "Enter a rejection reason in Notes before rejecting.";
+				return;
+			}
+
+			ShowRejectReasonPrompt = false;
+
 			SelectedDuplicateReviewItem.DecisionStatus = decision;
-			SelectedDuplicateReviewItem.DecisionNote = $"{decision} at {DateTime.UtcNow:O}";
+			SelectedDuplicateReviewItem.LifecycleState = lifecycleState;
+			var notePrefix = string.IsNullOrWhiteSpace(ReviewNotes)
+				? decision
+				: ReviewNotes.Trim();
+			SelectedDuplicateReviewItem.DecisionNote = $"{notePrefix} at {DateTime.UtcNow:O}";
+			SelectedDuplicateReviewItem.UpdatedUtc = DateTime.UtcNow.ToString("O");
 
 			_service.AppendAuditEvent(
 				OutputDirectory,
@@ -489,17 +695,71 @@ public partial class MainWindowViewModel : ViewModelBase
 					["confidence_label"] = SelectedDuplicateReviewItem.ConfidenceLabel,
 					["risk_label"] = SelectedDuplicateReviewItem.RiskLabel,
 					["decision_status"] = SelectedDuplicateReviewItem.DecisionStatus,
+					["decision_note"] = SelectedDuplicateReviewItem.DecisionNote ?? string.Empty,
+					["lifecycle_state"] = SelectedDuplicateReviewItem.LifecycleState,
+					["owner_name"] = SelectedDuplicateReviewItem.OwnerName ?? string.Empty,
+					["owner_team"] = SelectedDuplicateReviewItem.OwnerTeam,
 				});
 
-			OnPropertyChanged(nameof(PendingReviewCount));
-			OnPropertyChanged(nameof(ApprovedReviewCount));
-			OnPropertyChanged(nameof(RejectedReviewCount));
+			RefreshWorkflowMetrics();
 			StatusMessage = $"Duplicate group {SelectedDuplicateReviewItem.DuplicateGroup} marked {decision}.";
 		}
 		catch (Exception ex)
 		{
 			StatusMessage = $"Failed to apply merge decision: {ex.Message}";
 		}
+	}
+
+	partial void OnReviewNotesChanged(string value)
+	{
+		// Keep the inline reject prompt visible while the user types.
+		// It should close only when reject succeeds or selection changes.
+	}
+
+	private void UpdateSelectedLifecycleState(string lifecycleState, string decisionStatus, string auditAction, string statusSuffix)
+	{
+		try
+		{
+			if (SelectedDuplicateReviewItem is null)
+			{
+				StatusMessage = "Select a duplicate group in Review Queue first.";
+				return;
+			}
+
+			SelectedDuplicateReviewItem.LifecycleState = lifecycleState;
+			SelectedDuplicateReviewItem.DecisionStatus = decisionStatus;
+			SelectedDuplicateReviewItem.DecisionNote = $"{statusSuffix} at {DateTime.UtcNow:O}";
+			SelectedDuplicateReviewItem.UpdatedUtc = DateTime.UtcNow.ToString("O");
+
+			_service.AppendAuditEvent(
+				OutputDirectory,
+				Actor,
+				auditAction,
+				$"duplicate_group_{SelectedDuplicateReviewItem.DuplicateGroup}",
+				new Dictionary<string, object>
+				{
+					["duplicate_group"] = SelectedDuplicateReviewItem.DuplicateGroup,
+					["lifecycle_state"] = SelectedDuplicateReviewItem.LifecycleState,
+					["decision_status"] = SelectedDuplicateReviewItem.DecisionStatus,
+				});
+
+			RefreshWorkflowMetrics();
+			StatusMessage = $"Duplicate group {SelectedDuplicateReviewItem.DuplicateGroup} {statusSuffix}.";
+		}
+		catch (Exception ex)
+		{
+			StatusMessage = $"Failed to update lifecycle state: {ex.Message}";
+		}
+	}
+
+	private void RefreshWorkflowMetrics()
+	{
+		OnPropertyChanged(nameof(PendingReviewCount));
+		OnPropertyChanged(nameof(ApprovedReviewCount));
+		OnPropertyChanged(nameof(RejectedReviewCount));
+		OnPropertyChanged(nameof(InReviewCount));
+		OnPropertyChanged(nameof(ResolvedCount));
+		OnPropertyChanged(nameof(ClosureRateDisplay));
 	}
 
 	private static void Replace<T>(ObservableCollection<T> collection, IEnumerable<T> items)

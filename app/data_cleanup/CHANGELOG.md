@@ -1,5 +1,27 @@
 # Internal Data Cleanup Tool Changelog
 
+## v0.4.1 - Update 2 Refinements (Testable)
+
+- Simplified Review Queue flow: duplicate groups auto-enter `in_review` after analysis.
+- Removed redundant queue action and tightened top-grid layout for smaller screens.
+- Added inline conditional reject-reason prompt (only appears when reject is attempted without a reason).
+- Added visible reject reason column in the duplicate review queue grid.
+- Added granular invoice exception controls: flag all, flag selected, unflag selected.
+- Added mocked invoice author routing (`created_by`) so flagged invoices assign back to the source author.
+- Added AR lead communication outputs from pipeline runs:
+  - enriched `summary_<run_id>.json` with overall picture + routing sections
+  - `ar_lead_digest_<run_id>.md` human-readable digest
+  - `action_exports/ar_actions_<run_id>.csv` action handoff template
+- Updated behavior to keep duplicate review state session-scoped for demo runs (no cross-run persistence restore).
+
+## v0.4.0 - Spec Update 2 (Testable)
+
+- Added handoff lifecycle states for duplicate review queue items: `new`, `in_review`, `approved`, `resolved`, and `rejected`.
+- Added AR ownership fields and assignment workflow controls in the Review Queue.
+- Added CSV action-export template generation for handoff (`action_exports/ar_actions_<run_id>.csv`).
+- Added rerun/closure tracking metrics in-app: rerun count, last rerun timestamp, resolved count, and closure rate.
+- Added lifecycle/ownership column help text and audit events for assignment, lifecycle transitions, and export actions.
+
 ## v0.3.0 - Spec Update 1 (Testable)
 
 - Added duplicate merge decision workflow in Review Queue with explicit approve/reject actions.
