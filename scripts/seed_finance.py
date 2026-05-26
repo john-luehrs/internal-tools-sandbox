@@ -37,6 +37,7 @@ def _duplicate_customer_rows(start_id: int) -> list[tuple[int, str, str, str]]:
     Distribution in this block:
     - 2 true-merge pairs (exact same company + tier + email)
     - 4 ambiguous pairs (same billing inbox but org attributes vary)
+    - 1 same-company/same-tier pair with different billing emails
     """
     rows = [
         # True merges
@@ -53,6 +54,9 @@ def _duplicate_customer_rows(start_id: int) -> list[tuple[int, str, str, str]]:
         (start_id + 9, "Orion Health", "billing@orionholdings.com", "mid-market"),
         (start_id + 10, "Redwood Group LLC", "ap@redwoodgroup.com", "mid-market"),
         (start_id + 11, "Redwood Consulting", "ap@redwoodgroup.com", "mid-market"),
+        # Same company + same tier, but different billing emails
+        (start_id + 12, "Pioneer Manufacturing", "billing@pioneermfg.com", "mid-market"),
+        (start_id + 13, "Pioneer Manufacturing", "ap@pioneermfg.com", "mid-market"),
     ]
     return rows
 

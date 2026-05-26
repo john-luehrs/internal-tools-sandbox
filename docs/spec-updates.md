@@ -125,6 +125,17 @@ Each tool receives **two rounds of spec changes**, simulating real-world evolvin
 - Add AR ownership fields and action-export template  
 - Add rerun/closure tracking metrics  
 
+## Operational Refinements (Implemented)
+**Reason:** Demo clarity and analyst workflow consistency.
+
+**Changes:**
+- Add startup landing selector with Manual Run vs Automated Demo paths.
+- Add explicit Step 1 source-data verification before moving to analysis.
+- Replace inline reject/assignment inputs with modal decision flow for approve/reject.
+- Enforce complete triage before manual pipeline execution (no undecided groups).
+- Add AR lead email preview generated from run artifacts for communication handoff.
+- Extend duplicate detection to include same-company + same-tier + different-email scenarios.
+
 ---
 
 # 6. Slack Productivity Bot

@@ -84,7 +84,12 @@ public sealed class DataCleanupService
 
 	public IReadOnlyList<DuplicateCandidate> FindDuplicateCustomers(IEnumerable<CustomerRecord> customers)
 	{
-		var grouped = customers
+		var customerRows = customers.ToList();
+		var output = new List<DuplicateCandidate>();
+		var seenCustomerIds = new HashSet<long>();
+		var groupNumber = 1;
+
+		var groupedByEmail = customerRows
 			.Select(c => new { Customer = c, NormalizedEmail = NormalizeEmail(c.Email) })
 			.Where(item => !string.IsNullOrWhiteSpace(item.NormalizedEmail))
 			.GroupBy(item => item.NormalizedEmail)
@@ -92,35 +97,86 @@ public sealed class DataCleanupService
 			.OrderBy(group => group.Key)
 			.ToList();
 
-		var output = new List<DuplicateCandidate>();
-		var groupNumber = 1;
-
-		foreach (var group in grouped)
+		foreach (var group in groupedByEmail)
 		{
-			var confidenceScore = ComputeDuplicateConfidenceScore(group.Select(item => item.Customer));
-			var confidenceLabel = ResolveConfidenceLabel(confidenceScore);
-			var riskLabel = ResolveRiskLabel(group.Select(item => item.Customer));
+			AppendDuplicateGroup(
+				output,
+				groupNumber,
+				group.Select(item => item.Customer),
+				group.Key,
+				seenCustomerIds);
 
-			foreach (var item in group.OrderBy(x => x.Customer.CustomerId))
+			groupNumber++;
+		}
+
+		var groupedByCompanyTier = customerRows
+			.Select(c => new
 			{
-				output.Add(new DuplicateCandidate
-				{
-					DuplicateGroup = groupNumber,
-					CustomerId = item.Customer.CustomerId,
-					CompanyName = item.Customer.CompanyName,
-					Email = item.Customer.Email,
-					NormalizedEmail = item.NormalizedEmail,
-					AccountTier = item.Customer.AccountTier,
-					ConfidenceScore = confidenceScore,
-					ConfidenceLabel = confidenceLabel,
-					RiskLabel = riskLabel,
-				});
-			}
+				Customer = c,
+				NormalizedCompany = NormalizeCompany(c.CompanyName),
+				NormalizedTier = NormalizeTier(c.AccountTier),
+				NormalizedEmail = NormalizeEmail(c.Email),
+			})
+			.Where(item => !string.IsNullOrWhiteSpace(item.NormalizedCompany) && !string.IsNullOrWhiteSpace(item.NormalizedTier))
+			.GroupBy(item => $"{item.NormalizedCompany}|{item.NormalizedTier}")
+			.Where(group => group.Count() > 1)
+			.Where(group => group.Select(item => item.NormalizedEmail).Where(email => !string.IsNullOrWhiteSpace(email)).Distinct().Count() > 1)
+			.Where(group => group.Any(item => !seenCustomerIds.Contains(item.Customer.CustomerId)))
+			.OrderBy(group => group.Key)
+			.ToList();
+
+		foreach (var group in groupedByCompanyTier)
+		{
+			var keyParts = group.Key.Split('|');
+			var companyTierKey = $"company_tier:{keyParts[0]}|{keyParts[1]}";
+
+			AppendDuplicateGroup(
+				output,
+				groupNumber,
+				group.Select(item => item.Customer),
+				companyTierKey,
+				seenCustomerIds);
 
 			groupNumber++;
 		}
 
 		return output;
+	}
+
+	private static void AppendDuplicateGroup(
+		List<DuplicateCandidate> output,
+		int groupNumber,
+		IEnumerable<CustomerRecord> customers,
+		string groupingSignal,
+		ISet<long> seenCustomerIds)
+	{
+		var rows = customers.OrderBy(item => item.CustomerId).ToList();
+		if (rows.Count < 2)
+		{
+			return;
+		}
+
+		var confidenceScore = ComputeDuplicateConfidenceScore(rows);
+		var confidenceLabel = ResolveConfidenceLabel(confidenceScore);
+		var riskLabel = ResolveRiskLabel(rows);
+
+		foreach (var customer in rows)
+		{
+			output.Add(new DuplicateCandidate
+			{
+				DuplicateGroup = groupNumber,
+				CustomerId = customer.CustomerId,
+				CompanyName = customer.CompanyName,
+				Email = customer.Email,
+				NormalizedEmail = groupingSignal,
+				AccountTier = customer.AccountTier,
+				ConfidenceScore = confidenceScore,
+				ConfidenceLabel = confidenceLabel,
+				RiskLabel = riskLabel,
+			});
+
+			seenCustomerIds.Add(customer.CustomerId);
+		}
 	}
 
 	public IReadOnlyList<DuplicateReviewItem> BuildDuplicateReviewQueue(IEnumerable<DuplicateCandidate> duplicates)
@@ -132,11 +188,12 @@ public sealed class DataCleanupService
 			{
 				var rows = group.OrderBy(item => item.CustomerId).ToList();
 				var first = rows.First();
+				var emailSummary = BuildGroupEmailSummary(rows);
 
 				return new DuplicateReviewItem
 				{
 					DuplicateGroup = group.Key,
-					NormalizedEmail = first.NormalizedEmail ?? string.Empty,
+					NormalizedEmail = emailSummary,
 					CandidateCount = rows.Count,
 					CustomerIds = string.Join(", ", rows.Select(item => item.CustomerId)),
 					Companies = string.Join(" | ", rows.Select(item => item.CompanyName).Where(item => !string.IsNullOrWhiteSpace(item))),
@@ -148,6 +205,28 @@ public sealed class DataCleanupService
 			.ToList();
 
 		return queue;
+	}
+
+	private static string BuildGroupEmailSummary(IReadOnlyList<DuplicateCandidate> rows)
+	{
+		var emails = rows
+			.Select(item => NormalizeEmail(item.Email))
+			.Where(item => !string.IsNullOrWhiteSpace(item))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.OrderBy(item => item)
+			.ToList();
+
+		if (emails.Count == 0)
+		{
+			return string.Empty;
+		}
+
+		if (emails.Count == 1)
+		{
+			return emails[0];
+		}
+
+		return string.Join(" | ", emails);
 	}
 
 	public IReadOnlyList<DuplicateReviewItem> ApplyWorkflowState(string outputDir, IEnumerable<DuplicateReviewItem> queue)
@@ -440,6 +519,26 @@ public sealed class DataCleanupService
 		}
 
 		return email.Trim().ToLowerInvariant();
+	}
+
+	private static string NormalizeCompany(string? companyName)
+	{
+		if (string.IsNullOrWhiteSpace(companyName))
+		{
+			return string.Empty;
+		}
+
+		return companyName.Trim().ToLowerInvariant();
+	}
+
+	private static string NormalizeTier(string? tier)
+	{
+		if (string.IsNullOrWhiteSpace(tier))
+		{
+			return string.Empty;
+		}
+
+		return tier.Trim().ToLowerInvariant();
 	}
 
 	private static (decimal? Amount, string ParseStatus, string? FailureReason) NormalizeAmount(string? amountRaw)

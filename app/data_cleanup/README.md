@@ -39,12 +39,37 @@ From repo root:
 dotnet run --project app/data_cleanup
 ```
 
+If the app is already running, stop it before building:
+
+```bash
+dotnet build app/data_cleanup/data_cleanup.csproj
+```
+
 ### Workflow in app
 
-1. Data Profile: inspect customer and invoice source rows
+Startup modes:
+
+1. Landing selector
+	- Manual Run: full analyst workflow
+	- Automated Demo: auto-run flow with progress panel + AR email preview
+
+Manual workflow:
+
+1. Data Profile: inspect customer/invoice rows and confirm source DB before continuing
 2. Candidate Analysis: review duplicate candidates and invoice normalization outcomes
-3. Review Queue: duplicate groups auto-enter `in_review`, assign AR ownership, approve/reject (reject requires inline reason), resolve, inspect quick comparisons, and export action templates
-4. Execute Run: generate deterministic report artifacts
+3. Review Queue:
+	- duplicate groups auto-enter `in_review`
+	- approve/reject opens modal dialog
+	- owner/team captured in modal for both approve and reject
+	- reject reason required in modal
+	- resolve, quick comparison, and action export remain available
+4. Execute Run: generate deterministic report artifacts and preview AR lead email
+
+Operational notes:
+
+- Back to Mode Selection triggers a refresh before returning to landing mode.
+- Manual pipeline run requires all duplicate groups to be triaged (no pending groups).
+- Approved/rejected groups must be assigned before run output generation.
 
 Artifacts are written locally to `reports/data_cleanup/` by default:
 
@@ -61,6 +86,13 @@ Artifacts are written locally to `reports/data_cleanup/` by default:
 - merge candidate groups with AR assignee
 - rejected groups with reason + assignee candidate
 - flagged invoices with assignee (defaulted to invoice author)
+
+Duplicate detection coverage now includes:
+
+- same-email duplicate groups
+- same-company + same-tier groups where emails differ (for manual validation scenarios)
+
+Review queue email column now shows combined distinct addresses for each duplicate group.
 
 ### Notes
 
