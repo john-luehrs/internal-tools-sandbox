@@ -81,6 +81,8 @@ npm install
 npm run dev -- --webpack
 ```
 
+Important: `npm` commands for Tool 1/2/4 must be run from `web/` (the sandbox root does not include a `package.json`).
+
 Open one of the active dashboards:
 
 - http://localhost:3000/support-triage/tickets
@@ -106,12 +108,21 @@ dotnet run --project app/data_cleanup
 
 Tool 5 is a standalone Avalonia desktop workflow in `app/data_cleanup` and is not part of the active Next.js web platform.
 
-Current desktop workflow steps:
+Current desktop startup and workflow:
 
-1. Data Profile
-2. Candidate Analysis
-3. Review Queue (auto in_review, AR assignment, approve/reject with inline reject reason, resolve, quick comparison, action export)
-4. Execute Run
+1. Landing mode selector
+  - Manual Run: opens full 4-step workflow
+  - Automated Demo: runs end-to-end automation with simplified progress + email-preview screen
+2. Manual Step 1: Data Profile
+  - Verify source DB/data and continue to Step 2 via explicit confirmation
+3. Manual Step 2: Candidate Analysis
+4. Manual Step 3: Review Queue
+  - Approve/Reject opens decision modal (assignment captured in modal; reject reason required in modal)
+  - Quick comparison panel remains visible while decision modal is open
+5. Manual Step 4: Execute Run
+  - Generate deterministic artifacts + AR lead digest/email preview
+
+Back to Mode Selection now refreshes analysis state before returning to the landing selector.
 
 ## Agent Workflow Governance
 

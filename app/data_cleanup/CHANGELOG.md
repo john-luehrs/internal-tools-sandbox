@@ -1,5 +1,32 @@
 # Internal Data Cleanup Tool Changelog
 
+## v0.5.0 - Workflow UX and Operations Update (Testable)
+
+- Added startup landing selector with explicit run modes:
+  - Manual Run (full analyst workflow)
+  - Automated Demo (auto-run with focused progress/email preview view)
+- Added Back to Mode Selection navigation and refresh-on-back behavior.
+- Added Step 1 verification checkpoint with explicit "Continue to Step 2" action.
+- Reworked Review Queue decision UX:
+  - approve/reject now open a dedicated decision dialog
+  - owner/team assignment is captured in dialog for both approve/reject
+  - reject reason is required in dialog
+  - removed inline reject-reason prompt and inline assignment controls from main queue surface
+- Refined decision dialog sizing/placement to preserve visibility of comparison signals during review.
+- Strengthened manual execution guardrails:
+  - block pipeline runs when duplicate groups remain undecided
+  - keep assignment requirement for approved/rejected groups prior to run
+- Extended duplicate detection scenarios:
+  - added same-company + same-tier + different-email detection path
+  - updated seeded finance data with a dedicated same-company/different-email scenario
+- Updated Review Queue email display to show grouped distinct addresses for each duplicate group.
+- Added AR lead email preview modal generated from latest summary artifacts.
+- Improved AR email readability with concise snapshot/action tracker wording and normalized reason text.
+- UI polish updates:
+  - refreshed step instructions
+  - improved header button contrast
+  - corrected step layout spacing regressions introduced by instruction banners
+
 ## v0.4.1 - Update 2 Refinements (Testable)
 
 - Simplified Review Queue flow: duplicate groups auto-enter `in_review` after analysis.

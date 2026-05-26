@@ -37,17 +37,18 @@
             </Style>
         </Grid.Styles>
 
-        <Border Background="#13243E" CornerRadius="10" Padding="16">
-            <Grid ColumnDefinitions="*,Auto">
+        <Border Background="#13243E" CornerRadius="10" Padding="16" IsVisible="{Binding ShowMainWorkspace}">
+            <Grid ColumnDefinitions="*,Auto,Auto">
                 <StackPanel>
                     <TextBlock Foreground="White" FontSize="22" FontWeight="SemiBold" Text="Internal Data Cleanup Tool" />
                     <TextBlock Foreground="#C9D6E9" Text="Profile data, review duplicate and invoice exceptions, then generate deterministic reports." />
                 </StackPanel>
-                <Button Grid.Column="1" VerticalAlignment="Center" Content="Refresh Analysis" Command="{Binding RefreshAnalysisCommand}" />
+                <Button Grid.Column="1" VerticalAlignment="Center" Content="Back to Mode Selection" Command="{Binding BackToModeSelectionCommand}" Background="#2A3653" Foreground="White" BorderBrush="#5B6F9A" Margin="0,0,8,0" />
+                <Button Grid.Column="2" VerticalAlignment="Center" Content="Refresh Analysis" Command="{Binding RefreshAnalysisCommand}" Background="#1F4A87" Foreground="White" BorderBrush="#5B81B8" />
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,*,*,*" Margin="0,12,0,0">
+        <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,*,*,*" Margin="0,12,0,0" IsVisible="{Binding ShowManualWorkspace}">
             <Button Background="#EEF5FF" BorderBrush="#C6DAF7" BorderThickness="1" CornerRadius="8" Padding="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Command="{Binding ApplyKpiScopeCommand}" CommandParameter="customers">
                 <StackPanel>
                     <TextBlock FontSize="12" Foreground="#355D94" Text="Customers" />
@@ -92,7 +93,7 @@
             </Button>
         </Grid>
 
-        <TabControl Grid.Row="2" Margin="0,8,0,0" SelectedIndex="{Binding SelectedStepIndex}">
+        <TabControl Grid.Row="2" Margin="0,8,0,0" SelectedIndex="{Binding SelectedStepIndex}" IsVisible="{Binding ShowManualWorkspace}">
             <TabControl.Styles>
                 <Style Selector="TabItem">
                     <Setter Property="FontSize" Value="14" />
@@ -122,50 +123,52 @@
             </TabControl.Styles>
 
             <TabItem Header="1. Data Profile">
-                <Grid RowDefinitions="Auto,Auto,*,Auto,*" Margin="8">
-                    <TextBlock FontWeight="SemiBold" Text="{Binding CustomerPreviewTitle}" />
-                    <TextBlock Grid.Row="1" Margin="0,4,0,8" Foreground="#5F708A" Text="{Binding DuplicateCount, StringFormat='Rows currently flagged in duplicate analysis: {0}'}" />
-                    <DataGrid Grid.Row="2" Margin="0,0,0,8" ItemsSource="{Binding DisplayedCustomerRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
-                    <TextBlock Grid.Row="3" Margin="0,8,0,0" FontWeight="SemiBold" Text="Invoice records" />
-                    <DataGrid Grid.Row="4" ItemsSource="{Binding DisplayedProfileInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,*" Margin="8">
+                    <Border Background="#EEF5FF" BorderBrush="#C6DAF7" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,8">
+                        <TextBlock Foreground="#355D94" TextWrapping="Wrap" Text="Step 1 - Verify source data. Review customer and invoice rows to confirm this is the correct database before running analysis." />
+                    </Border>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+                        <CheckBox Content="I verified the source DB/data on this page" IsChecked="{Binding IsDataProfileVerified}" VerticalAlignment="Center" />
+                        <Button Content="Continue to Step 2" Command="{Binding ContinueToCandidateAnalysisCommand}" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" FontWeight="SemiBold" Text="{Binding CustomerPreviewTitle}" />
+                    <TextBlock Grid.Row="3" Margin="0,4,0,8" Foreground="#5F708A" Text="{Binding DuplicateCount, StringFormat='Rows currently flagged in duplicate analysis: {0}'}" />
+                    <DataGrid Grid.Row="4" Margin="0,0,0,8" ItemsSource="{Binding DisplayedCustomerRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="5" Margin="0,8,0,0" FontWeight="SemiBold" Text="Invoice records" />
+                    <DataGrid Grid.Row="6" ItemsSource="{Binding DisplayedProfileInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
                 </Grid>
             </TabItem>
 
             <TabItem Header="2. Candidate Analysis">
-                <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,*" Margin="8">
-                    <Grid ColumnDefinitions="*,Auto">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,*" Margin="8">
+                    <Border Grid.Row="0" Background="#F5F8FC" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,8">
+                        <TextBlock Foreground="#4D607C" TextWrapping="Wrap" Text="Step 2 - Run analysis to detect duplicate candidates and invoice parse issues. Use this page to confirm the risk surface before making decisions." />
+                    </Border>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
                         <TextBlock FontWeight="SemiBold" Text="Duplicate customer candidates" />
                         <Button Grid.Column="1" Content="Run Analysis" Command="{Binding RunAnalysisCommand}" />
                     </Grid>
-                    <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="#5F708A" Text="{Binding DuplicateCount, StringFormat='Duplicate rows: {0}'}" />
-                    <TextBlock Grid.Row="2" Margin="0,0,0,8" Foreground="#5F708A" Text="{Binding DuplicateGroupCount, StringFormat='Duplicate groups: {0}'}" />
-                    <DataGrid Grid.Row="3" Margin="0,0,0,8" ItemsSource="{Binding DuplicateRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
-                    <TextBlock Grid.Row="4" Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding InvoicePreviewTitle}" />
-                    <DataGrid Grid.Row="5" ItemsSource="{Binding DisplayedInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="2" Margin="0,4,0,0" Foreground="#5F708A" Text="{Binding DuplicateCount, StringFormat='Duplicate rows: {0}'}" />
+                    <TextBlock Grid.Row="3" Margin="0,0,0,8" Foreground="#5F708A" Text="{Binding DuplicateGroupCount, StringFormat='Duplicate groups: {0}'}" />
+                    <DataGrid Grid.Row="4" Margin="0,0,0,8" ItemsSource="{Binding DuplicateRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
+                    <TextBlock Grid.Row="5" Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding InvoicePreviewTitle}" />
+                    <DataGrid Grid.Row="6" ItemsSource="{Binding DisplayedInvoiceRows}" IsReadOnly="True" AutoGenerateColumns="True" AutoGeneratingColumn="OnAutoGeneratingColumn" VerticalAlignment="Stretch" />
                 </Grid>
             </TabItem>
 
             <TabItem Header="3. Review Queue">
                 <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*,Auto,Auto,*" Margin="8">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Border Grid.Row="0" Background="#FFF8E8" BorderBrush="#EFDFAF" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,8">
+                        <TextBlock Foreground="#8A6D28" TextWrapping="Wrap" Text="Step 3 - Triage each duplicate group. Assign ownership, approve or reject with reason, and flag invoice exceptions so handoff actions are complete." />
+                    </Border>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
                         <Button Content="Approve Selected Merge" Command="{Binding ApproveSelectedMergeCommand}" />
                         <Button Content="Resolve Selected" Command="{Binding ResolveSelectedItemCommand}" />
                         <Button Content="Reject Selected Merge" Command="{Binding RejectSelectedMergeCommand}" />
                         <Button Content="Export Action Template" Command="{Binding ExportActionTemplateCommand}" />
                     </StackPanel>
 
-                    <Grid Grid.Row="1" ColumnDefinitions="Auto,220,Auto,170,Auto" Margin="0,8,0,0">
-                        <TextBlock VerticalAlignment="Center" Text="Owner" />
-                        <TextBox Grid.Column="1" Text="{Binding AssignmentOwner}" />
-                        <TextBlock Grid.Column="2" VerticalAlignment="Center" Margin="12,0,0,0" Text="Team" />
-                        <TextBox Grid.Column="3" Text="{Binding AssignmentTeam}" Margin="8,0,0,0" />
-                        <Button Grid.Column="4" Content="Assign Selected" Command="{Binding AssignSelectedOwnerCommand}" Margin="12,0,0,0" />
-                    </Grid>
-
-                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" Margin="0,8,0,0" IsVisible="{Binding ShowRejectReasonPrompt}">
-                        <TextBlock VerticalAlignment="Center" Text="Reject Reason (required)" FontWeight="SemiBold" Foreground="#8A4A3D" />
-                        <TextBox Grid.Column="1" Margin="12,0,0,0" Text="{Binding ReviewNotes}" Watermark="Type rejection reason here before clicking Reject Selected Merge" />
-                    </Grid>
+                    <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="#5F708A" Text="Approve/Reject opens a decision dialog where owner, team, and rejection reason are captured." />
 
                     <TextBlock Grid.Row="3" Margin="0,8,0,0" Foreground="#5F708A" Text="{Binding PendingReviewCount, StringFormat='Pending: {0}'}" />
                     <TextBlock Grid.Row="3" Margin="140,8,0,0" Foreground="#5F708A" Text="{Binding InReviewCount, StringFormat='In Review: {0}'}" />
@@ -196,26 +199,39 @@
             </TabItem>
 
             <TabItem Header="4. Execute Run">
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="8">
-                    <TextBlock Text="Run deterministic report generation and produce artifact files." />
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" Margin="8">
+                    <Border Grid.Row="0" Background="#F2F9F6" BorderBrush="#C9E7D8" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,8">
+                        <TextBlock Foreground="#3C7B5C" TextWrapping="Wrap" Text="Step 4 - Generate outputs. Confirm DB path, output folder, and actor, then run pipeline to produce summary, action report, and AR lead digest artifacts." />
+                    </Border>
 
-                    <Grid Grid.Row="1" ColumnDefinitions="Auto,*">
+                    <Border Grid.Row="1" Background="#F5F8FC" BorderBrush="#D7E2F3" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,8,0,0">
+                        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*">
+                            <Button Content="Start Demo Mode" Command="{Binding StartDemoModeCommand}" />
+                            <TextBlock Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#5F708A" Text="Runs full automation flow: detect, decide, assign, flag, and generate final outputs." TextWrapping="Wrap" />
+                            <Border Grid.Row="1" Grid.ColumnSpan="2" Background="White" BorderBrush="#D7E2F3" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,8,0,0">
+                                <TextBlock Text="{Binding DemoProgressLog}" FontFamily="Consolas" TextWrapping="Wrap" />
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="3" ColumnDefinitions="Auto,*">
                         <TextBlock VerticalAlignment="Center" Text="Database Path" />
                         <TextBox Grid.Column="1" Text="{Binding DbPath}" MinWidth="700" />
                     </Grid>
 
-                    <Grid Grid.Row="2" ColumnDefinitions="Auto,*" Margin="0,8,0,0">
+                    <Grid Grid.Row="4" ColumnDefinitions="Auto,*" Margin="0,8,0,0">
                         <TextBlock VerticalAlignment="Center" Text="Output Directory" />
                         <TextBox Grid.Column="1" Text="{Binding OutputDirectory}" MinWidth="700" />
                     </Grid>
 
-                    <Grid Grid.Row="3" ColumnDefinitions="Auto,220,Auto" Margin="0,8,0,0">
+                    <Grid Grid.Row="5" ColumnDefinitions="Auto,220,Auto,Auto" Margin="0,8,0,0">
                         <TextBlock VerticalAlignment="Center" Text="Actor" />
                         <TextBox Grid.Column="1" Text="{Binding Actor}" />
                         <Button Grid.Column="2" Content="Run Cleanup Pipeline" Command="{Binding RunPipelineCommand}" />
+                        <Button Grid.Column="3" Content="Preview AR Lead Email" Command="{Binding OpenEmailPreviewCommand}" Margin="8,0,0,0" />
                     </Grid>
 
-                    <Border Grid.Row="4" CornerRadius="8" BorderBrush="#CCD7EA" BorderThickness="1" Padding="10" Margin="0,8,0,0" IsVisible="{Binding HasLatestRun}">
+                    <Border Grid.Row="6" CornerRadius="8" BorderBrush="#CCD7EA" BorderThickness="1" Padding="10" Margin="0,8,0,0" IsVisible="{Binding HasLatestRun}">
                         <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
                             <TextBlock FontWeight="SemiBold" Text="Latest Run" />
                             <TextBlock Grid.Row="1" Text="{Binding LatestRun.RunId, StringFormat='Run ID: {0}'}" />
@@ -229,8 +245,119 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="3" Background="#F8FAFD" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="10">
+        <Border Grid.Row="2" Background="#F5F8FC" BorderBrush="#D7E2F3" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,8,0,0" IsVisible="{Binding ShowAutomatedWorkspace}">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*">
+                <TextBlock FontSize="20" FontWeight="SemiBold" Text="Automated Demo Run" />
+                <TextBlock Grid.Row="1" Margin="0,6,0,0" Foreground="#5F708A" Text="This mode runs the end-to-end automation flow and prepares an AR-ready email preview." TextWrapping="Wrap" />
+
+                <Border Grid.Row="2" Background="White" BorderBrush="#D7E2F3" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,12,0,0">
+                    <TextBlock Text="{Binding DemoProgressLog}" FontFamily="Consolas" TextWrapping="Wrap" />
+                </Border>
+
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                    <Button Content="Preview AR Lead Email" Command="{Binding OpenEmailPreviewCommand}" />
+                    <Button Content="Back to Mode Selection" Command="{Binding BackToModeSelectionCommand}" />
+                </StackPanel>
+
+                <Border Grid.Row="4" CornerRadius="8" BorderBrush="#CCD7EA" BorderThickness="1" Padding="10" Margin="0,12,0,0" IsVisible="{Binding HasLatestRun}">
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+                        <TextBlock FontWeight="SemiBold" Text="Latest Automated Run" />
+                        <TextBlock Grid.Row="1" Text="{Binding LatestRun.RunId, StringFormat='Run ID: {0}'}" />
+                        <TextBlock Grid.Row="2" Text="{Binding LatestRun.DuplicatesPath, StringFormat='Duplicates: {0}'}" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="3" Text="{Binding LatestRun.InvoicesPath, StringFormat='Invoices: {0}'}" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="4" Text="{Binding LatestRun.ArActionReportPath, StringFormat='AR Action Report: {0}'}" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="5" Text="{Binding LatestRun.ArLeadDigestPath, StringFormat='AR Lead Digest: {0}'}" TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" Background="#F8FAFD" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="10" IsVisible="{Binding ShowMainWorkspace}">
             <TextBlock Text="{Binding StatusMessage}" />
+        </Border>
+
+        <Border Grid.RowSpan="4" Background="#E9EEF7" IsVisible="{Binding ShowLandingPage}">
+            <Grid HorizontalAlignment="Center" VerticalAlignment="Center" Width="860">
+                <Border Background="White" BorderBrush="#C9D6E9" BorderThickness="1" CornerRadius="12" Padding="22">
+                    <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,*">
+                        <TextBlock Grid.ColumnSpan="2" FontSize="26" FontWeight="SemiBold" Foreground="#13243E" Text="Choose Run Mode" />
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Foreground="#4D607C" Text="Select how you want to start the tool. Manual mode opens the full workflow; Automated mode runs the demo pipeline and shows progress plus email preview." TextWrapping="Wrap" />
+
+                        <Border Grid.Row="2" Background="#F7FAFF" BorderBrush="#D7E2F3" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,14,7,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock FontSize="18" FontWeight="SemiBold" Text="Manual Run" />
+                                <TextBlock Foreground="#5F708A" Text="Open the app as-is to inspect data, triage decisions, and run cleanup manually." TextWrapping="Wrap" />
+                                <Button Content="Open Manual Workflow" Command="{Binding StartManualRunModeCommand}" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="2" Grid.Column="1" Background="#F2F9F6" BorderBrush="#C9E7D8" BorderThickness="1" CornerRadius="10" Padding="14" Margin="7,14,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock FontSize="18" FontWeight="SemiBold" Text="Automated Demo" />
+                                <TextBlock Foreground="#3C7B5C" Text="Run the automated pipeline immediately, watch progress, and preview the AR lead email." TextWrapping="Wrap" />
+                                <Button Content="Start Automated Demo" Command="{Binding StartAutomatedRunModeCommand}" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border Grid.RowSpan="4" Background="#8A0F1F3A" IsVisible="{Binding IsDecisionDialogOpen}">
+            <Grid HorizontalAlignment="Left" VerticalAlignment="Top" Width="520" MaxHeight="420" Margin="24,88,0,0">
+                <Border Background="White" BorderBrush="#CCD7EA" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding DecisionDialogTitle}" />
+                        <Button Grid.Column="1" Content="Cancel" Command="{Binding CancelDecisionDialogCommand}" />
+
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Foreground="#5F708A" Text="{Binding DecisionDialogInstruction}" TextWrapping="Wrap" />
+
+                        <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto,*" Margin="0,12,0,0">
+                            <TextBlock VerticalAlignment="Center" Text="Owner" />
+                            <TextBox Grid.Column="1" Margin="8,0,16,0" Text="{Binding AssignmentOwner}" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="Team" />
+                            <TextBox Grid.Column="3" Margin="8,0,0,0" Text="{Binding AssignmentTeam}" />
+                        </Grid>
+
+                        <Grid Grid.Row="3" Grid.ColumnSpan="2" Margin="0,12,0,0" IsVisible="{Binding IsDecisionReasonVisible}">
+                            <Grid RowDefinitions="Auto,Auto">
+                                <TextBlock Foreground="#8A4A3D" FontWeight="SemiBold" Text="Reject Reason (required)" />
+                                <TextBox Grid.Row="1" Margin="0,6,0,0" Text="{Binding ReviewNotes}" Watermark="Enter rejection reason" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="64" />
+                            </Grid>
+                        </Grid>
+
+                        <Border Grid.Row="4" Grid.ColumnSpan="2" Background="#F8FAFD" BorderBrush="#D9E2F1" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,12,0,0">
+                            <TextBlock Foreground="#5F708A" Text="Decision will update owner assignment and lifecycle state for the selected group." TextWrapping="Wrap" />
+                        </Border>
+
+                        <StackPanel Grid.Row="5" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+                            <Button Content="Cancel" Command="{Binding CancelDecisionDialogCommand}" />
+                            <Button Content="Confirm Decision" Command="{Binding ConfirmDecisionDialogCommand}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border Grid.RowSpan="4" Background="#8A0F1F3A" IsVisible="{Binding IsEmailPreviewOpen}">
+            <Grid Margin="80">
+                <Border Background="White" BorderBrush="#CCD7EA" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="*,Auto">
+                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="Mock AR Email Preview" />
+                        <Button Grid.Column="1" Content="Close" Command="{Binding CloseEmailPreviewCommand}" />
+
+                        <TextBlock Grid.Row="1" Margin="0,8,0,0" FontWeight="SemiBold" Text="{Binding EmailPreviewSubject, StringFormat='Subject: {0}'}" TextWrapping="Wrap" />
+
+                        <Border Grid.Row="2" Grid.ColumnSpan="2" Margin="0,10,0,0" Background="#FBFDFF" BorderBrush="#D7E2F3" BorderThickness="1" CornerRadius="8" Padding="10">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <TextBox Text="{Binding EmailPreviewBody}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas" Background="Transparent" BorderThickness="0" />
+                            </ScrollViewer>
+                        </Border>
+
+                        <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Margin="0,10,0,0" Foreground="#5F708A" Text="This is a preview-only template generated from the latest summary report." />
+                    </Grid>
+                </Border>
+            </Grid>
         </Border>
     </Grid>
 
